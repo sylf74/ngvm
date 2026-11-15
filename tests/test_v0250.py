@@ -340,6 +340,7 @@ ADDONS = {
     "HELM_VERSION": "v3.19.0", "HELM_URL": "https://get.helm.sh", "STORAGE": "local-path",
     "LOCAL_PATH_URL": "https://raw.example.org/local-path.yaml", "CERT_MANAGER": "true",
     "CERT_MANAGER_CHART": "oci://quay.io/jetstack/charts/cert-manager", "CERT_MANAGER_VERSION": "v1.19.1",
+    "CSI_CHART_REPO": "https://charts.example.org/csi", "CSI_DRIVERS_VERSION": "",
     "ISSUER": "acme", "ISSUER_NAME": "ngvm", "ACME_EMAIL": "ops@example.org",
     "ACME_SERVER": "https://acme.example.org/directory", "INGRESS_CLASS": "nginx", "CNPG": "true",
     "CNPG_URL": "https://raw.example.org/cnpg.yaml", "AGENT": "true", "AGENT_NAME": "ngvm",

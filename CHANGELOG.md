@@ -5,6 +5,25 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.10 — 2026-11-15
+
+The storage of a cluster made by OpenTofu, found on the first tenant deployed on one.
+
+- **CSI drivers**: the addons step installs the chart `ceph-csi-drivers` between Rook's operator
+  and the cluster. Since Rook 1.20 the operator chart only installs the ceph-csi-operator, which
+  deploys nothing until a `Driver` and an `OperatorConfig` name what to run: the Ceph cluster was
+  healthy, `ceph-block` was the default class, and every PVC of every tenant stayed Pending for
+  ever. The drivers keep the names the storage class expects and tolerate the nodes' taints;
+  `csi_chart_repo` and `csi_drivers_version` set where they come from.
+- **The storage is checked**: the step ends only once `rook-ceph.rbd.csi.ceph.com` is registered,
+  with at least one pod of the driver running, and stops otherwise.
+
+**Upgrade**: a cluster made with v0.25.1 to v0.25.9 has no CSI driver: apply again (`revision`
+bumped) to install the chart, or install it by hand
+(`helm install ceph-csi-drivers -n rook-ceph ceph-csi-operator/ceph-csi-drivers` with Rook's
+recommended values). On a node whose CPU has no AVX2, pin an older cephcsi image
+(`csi.cephcsi.tag` of the operator chart): the default image of Rook 1.21 needs x86-64-v3.
+
 ## v0.25.9 — 2026-11-15
 
 A fix of the GitLab agent installed by the platform.

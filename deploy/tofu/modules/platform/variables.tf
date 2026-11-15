@@ -101,6 +101,8 @@ variable "addons" {
     rook_chart_repo      = optional(string, "https://charts.rook.io/release")
     rook_device_filter   = optional(string, "^vd[b-z]$")
     rook_failure_domain  = optional(string, "host")
+    csi_chart_repo       = optional(string, "https://ceph.github.io/ceph-csi-operator")
+    csi_drivers_version  = optional(string, "")
     local_path_url       = optional(string, "https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.32/deploy/local-path-storage.yaml")
     cert_manager         = optional(bool, true)
     cert_manager_chart   = optional(string, "oci://quay.io/jetstack/charts/cert-manager")

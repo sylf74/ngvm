@@ -134,9 +134,44 @@ cephBlockPools:
 cephFileSystems: []
 cephObjectStores: []
 ROOK_CLUSTER
+  # The CSI drivers come from a chart of their own since Rook 1.20: the operator chart installs the
+  # ceph-csi-operator, which deploys nothing until a Driver and an OperatorConfig name what to run.
+  # Without it every PVC stays Pending on a healthy cluster (v0.25.10). The driver names must match
+  # the provisioner of the storage class, <namespace>.rbd.csi.ceph.com.
+  cat > "$WORK/csi-drivers.yaml" <<CSI_DRIVERS
+operatorConfig:
+  namespace: rook-ceph
+  driverSpecDefaults:
+    imageSet:
+      name: rook-csi-operator-image-set-configmap
+    nodePlugin:
+      priorityClassName: system-node-critical
+      tolerations: $tolerations
+    controllerPlugin:
+      priorityClassName: system-cluster-critical
+      tolerations: $tolerations
+drivers:
+  rbd:
+    enabled: true
+    name: rook-ceph.rbd.csi.ceph.com
+  cephfs:
+    enabled: true
+    name: rook-ceph.cephfs.csi.ceph.com
+  nfs:
+    enabled: false
+    name: rook-ceph.nfs.csi.ceph.com
+  nvmeof:
+    enabled: false
+    name: rook-ceph.nvmeof.csi.ceph.com
+CSI_DRIVERS
   run helm repo add rook-release "$ROOK_CHART_REPO" --force-update > /dev/null
+  run helm repo add ceph-csi-operator "$CSI_CHART_REPO" --force-update > /dev/null
   run helm upgrade --install rook-ceph rook-release/rook-ceph --version "$ROOK_VERSION" -n rook-ceph --create-namespace \
     -f "$WORK/rook-operator.yaml" --wait --timeout 15m
+  csi_version=()
+  [ -z "${CSI_DRIVERS_VERSION:-}" ] || csi_version=(--version "$CSI_DRIVERS_VERSION")
+  run helm upgrade --install ceph-csi-drivers ceph-csi-operator/ceph-csi-drivers -n rook-ceph "${csi_version[@]}" \
+    -f "$WORK/csi-drivers.yaml" --wait --timeout 10m
   run helm upgrade --install rook-ceph-cluster rook-release/rook-ceph-cluster --version "$ROOK_VERSION" -n rook-ceph \
     -f "$WORK/rook-cluster.yaml" --timeout 15m
   if [ -z "$ROOT" ]; then
@@ -164,6 +199,23 @@ ROOK_CLUSTER
       log "WARN Ceph is $health: $(kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{range .status.ceph.details.*}{.message}; {end}' 2> /dev/null || true)(docs/platform.md, Rook-Ceph)"
     fi
     log "Ceph cluster $phase, $health"
+    # The storage is of no use without a driver registered: the step says it rather than leave
+    # every PVC of every tenant Pending on a cluster that looks healthy (v0.25.10).
+    driver=""
+    for _ in $(seq 30); do
+      driver=$(kubectl get csidriver rook-ceph.rbd.csi.ceph.com -o name 2> /dev/null || true)
+      [ -z "$driver" ] || break
+      sleep 10
+    done
+    [ -n "$driver" ] || fail "no CSI driver rook-ceph.rbd.csi.ceph.com: the chart ceph-csi-drivers did not register it (kubectl -n rook-ceph get drivers,pods)"
+    ready=""
+    for _ in $(seq 30); do
+      ready=$(kubectl -n rook-ceph get pods -l csi.ceph.io/driver-name=rook-ceph.rbd.csi.ceph.com --no-headers 2> /dev/null | awk '$3 == "Running"' | wc -l | tr -d " ")
+      [ "$ready" = 0 ] || break
+      sleep 10
+    done
+    [ "$ready" != 0 ] || log "WARN no pod of the RBD driver is running yet (kubectl -n rook-ceph get pods | grep csi)"
+    log "CSI driver rook-ceph.rbd.csi.ceph.com, $ready pods running"
   fi
 fi
 
