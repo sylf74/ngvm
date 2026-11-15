@@ -5,6 +5,17 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.26.1 — 2026-11-15
+
+A fix of v0.26.0, which did not close the case it was for.
+
+- **A mail is recorded as it is sent**, in the journal and in the shared service, where a passage
+  kept its journal in the same call as its state, at the very end. A passage killed after its mails
+  pushed neither: the next one saw nothing and mailed the same alerts again. A service that refuses
+  the journal leaves a `WARN` and the passage goes on.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.26.1`.
+
 ## v0.26.0 — 2026-11-15
 
 The watch and the shared intelligence service made to hold, after the incident of 13 to 15
