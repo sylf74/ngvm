@@ -134,6 +134,14 @@ def serve(args: argparse.Namespace) -> int:
 
     if args.osv_every_hours > 0:
         threading.Thread(target=osv_loop, daemon=True).start()
+
+    def cache_loop() -> None:  # v0.26.0: the cache does not grow for ever, the log says its size
+        wait, stop = 15.0, threading.Event()
+        while not stop.wait(wait):
+            print(f"intel: {service.purge()}", flush=True)
+            wait = 3600
+
+    threading.Thread(target=cache_loop, daemon=True).start()
     httpd = http_serve(service, args.host, args.port)
     try:
         httpd.serve_forever()

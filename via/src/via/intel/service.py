@@ -25,6 +25,7 @@ import datetime as dt
 import json
 import logging
 import re
+import shutil
 import threading
 from http import HTTPStatus
 from pathlib import Path
@@ -38,7 +39,7 @@ from ngvm.service import serve as _serve
 
 from .collect import collect_direct
 from .gti import discovered
-from .sources import CVE_ID, SourceError, Sources
+from .sources import CVE_ID, SourceError, Sources, cache_validity_hours, purge_cache
 
 log = logging.getLogger("via.intel")
 ROLES = {"read", "radar"}
@@ -49,6 +50,7 @@ MAX_CVES = 5000
 MAX_TECH = 5000
 TEXT = 300  # characters of a technology field or a title
 KINDS = ("radar", "gti")
+VOLUME_ALERT_PERCENT = 85  # the volume's use above which the status and the log say it (v0.26.0)
 
 
 def _now() -> dt.datetime:
@@ -137,8 +139,42 @@ class IntelService:
         self.settings = settings
         self.max_bytes = max_bytes
         self.collect_lock = threading.Lock()  # one collection at a time: one cache, one GTI quota
+        self.cache: dict[str, int] = {}  # files and bytes of the cache at its last purge
         self.transport = None  # tests
         self.fixtures: str | None = None  # tests: the sources read from files
+
+    # -- the cache and its volume (v0.26.0) ------------------------------------------------------
+    def storage(self) -> dict[str, Any]:
+        """The room left on the volume of the cache, and whether it is short (above 85 % used)."""
+        cache = Path(self.settings.sources.cache_dir)
+        try:
+            usage = shutil.disk_usage(cache if cache.is_dir() else self.store.root)
+        except OSError as exc:
+            return {"state": f"volume not readable: {exc}"}
+        percent = round(100 * usage.used / usage.total, 1) if usage.total else 0.0
+        return {
+            "total_bytes": usage.total, "free_bytes": usage.free, "used_percent": percent,
+            "alert": percent >= VOLUME_ALERT_PERCENT,
+        }  # fmt: skip
+
+    def purge(self) -> str:
+        """Remove the cache files nothing reads any more; one line for the log, with the cache's
+        size and the volume's use."""
+        removed, kept, size = purge_cache(self.settings.sources.cache_dir, cache_validity_hours(self.settings.sources))
+        self.cache = {"files": kept, "bytes": size}
+        vol = self.storage()
+        line = f"cache: {removed} old files removed, {kept} kept ({size / 1e6:.0f} MB)"
+        if "used_percent" in vol:
+            line += f"; volume {vol['used_percent']} % used, {vol['free_bytes'] / 1e9:.1f} GB free"
+            if vol["alert"]:
+                line = f"WARN {line}: above {VOLUME_ALERT_PERCENT} %, give it more room (NGVM_INTEL_SIZE)"
+        return line
+
+    def status(self, token: str | None) -> dict[str, Any]:
+        self._require(token, "read")
+        from via import __version__
+
+        return {"service": "intel", "version": __version__, "cache": self.cache, "volume": self.storage()}
 
     # -- OSV (v0.23.12) ------------------------------------------------------------------------
     def osv_mirror(self) -> osvdb.OsvMirror:
@@ -198,6 +234,10 @@ class IntelService:
                 out = collect_direct(sources, wanted, packages=body.get("packages") is True)
             finally:
                 sources.close()
+            if sources.cache_full:  # the records are complete; the next request will fetch them again
+                out.notes.append(f"WARN {sources.cache_full}")
+            if sources.cache_repaired:
+                out.notes.append(f"WARN cache unreadable, fetched again: {sources.cache_repaired} files")
         return {"records": [r.to_dict() for r in out.records], "errors": out.errors, "notes": out.notes}
 
     def new_records(self, token: str | None, query: dict[str, str]) -> dict[str, Any]:
@@ -426,6 +466,9 @@ def make_handler(service: IntelService) -> type[JsonHandler]:
                     self.end_headers()
                     if data:
                         self.wfile.write(data)
+                    return
+                if url.path == "/v1/status":  # v0.26.0
+                    self.send_json(HTTPStatus.OK, service.status(self.bearer()))
                     return
                 if url.path == "/v1/records/new":  # v0.23.4
                     self.send_json(HTTPStatus.OK, service.new_records(self.bearer(), query))

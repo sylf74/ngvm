@@ -31,6 +31,7 @@ from ngvm.config import describe_llm, describe_relay, env, load_settings
 from ngvm.declared import DeclaredMatcher
 from ngvm.llm import LlmClient
 from ngvm.profile import ProfileError, load_profile
+from ngvm.run import Phases
 from via.intel.sources import Sources
 
 from . import journal, radar, teams, word
@@ -189,6 +190,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return 2
     print(describe_llm(settings))
     print(describe_relay(settings))
+    phases = Phases()
     state = State.load(args.state)
     sheet_errors: list[str] = []  # errors of this run, not of a source: reported at once
     out = Path(args.out)
@@ -203,20 +205,23 @@ def cmd_watch(args: argparse.Namespace) -> int:
             print(f"sources: {args.sources}, {len(enabled)} enabled ({by_cat})")
         if catalogue and not radar.is_radar(profile):  # a GTI search and the news sites: the radar's only
             catalogue = [s for s in catalogue if not (s.radar_only or s.kind == "gti")]
-        items, errors = discover(sources, state, catalogue=catalogue)
+        with phases("discover"):
+            items, errors = discover(sources, state, catalogue=catalogue)
         if state.new:
             print(f"{profile.id}: first run, baseline recorded ({len(state.certfr)} CERT-FR, {len(state.kev)} KEV)")
             state.save()
             (out / "index.json").write_text("[]", encoding="utf-8")
             return 0
         if radar.is_radar(profile):  # the watch team's radar (v0.22.0): events, whoever they concern
-            alerts = radar.alerts(items, profile, sources, state, llm=llm)
+            with phases("match"):
+                alerts = radar.alerts(items, profile, sources, state, llm=llm)
         else:
             matcher = DeclaredMatcher(settings, llm)
             inventory = _inventory(args.inventory, profile.id)
             if inventory is not None:
                 inventory.applications = _applications(getattr(args, "applications", None))
-            alerts = relevant(items, profile, sources, settings, matcher, state, catalogue, inventory)
+            with phases("match"):  # the phase that was killed for memory (v0.26.0)
+                alerts = relevant(items, profile, sources, settings, matcher, state, catalogue, inventory)
             if inventory is not None and not args.fixtures:
                 note = propose_applications(inventory, llm, getattr(args, "proposals", None))
                 if note:
@@ -226,6 +231,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 if note:
                     print(note)
         index = []
+        phases.start("sheets")
         template = _word_template(profile, args.profile)
         try:
             contacts = load_contacts(args.contacts) if args.contacts and Path(args.contacts).exists() else []
@@ -263,6 +269,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                     sheet_errors.append(f"Word sheet of {alert.id} ({template}): {exc}")
             index.append(entry)
         (out / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+        phases.stop("sheets")
     finally:
         sources.close()
         if llm:
@@ -284,12 +291,19 @@ def cmd_watch(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         contacts, errors = [], [*errors, "contacts.yaml invalid"]
     analysts = _recipients(env("ANALYST_TO"))
+    # Alerts an earlier passage already mailed (v0.26.0): a passage killed after its mails and before
+    # it kept its state made the next one draft and mail them again, and the analyst got each alert
+    # as many times as the watch failed. At most one mail per alert, whatever happens next.
+    mailed = _already_mailed(getattr(args, "mailed", None))
     pipeline = os.environ.get("CI_PIPELINE_URL", "")
     log_path = Path(args.journal) if args.journal else Path(args.state).parent / "alerts-log.jsonl"
     events = [journal.event("drafted", a, cves=a.get("cves")) for a in index]
     for number, a in enumerate(index, start=1):
         if not analysts:
             break
+        if a["id"] in mailed:
+            print(f"  analysts: {a['id']} already mailed by an earlier passage, not mailed again")
+            continue
         fiche_html = (out / f"{a['id']}.html").read_text(encoding="utf-8")
         to = (
             ", ".join(f"{c.label()} [{c.language}]" for c in recipients(a["level"], contacts, profile))
@@ -324,6 +338,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
             errors.append(str(exc))
             events.append(journal.event("analysts", a, to=analysts, error=str(exc)))
     for number, a in enumerate(index, start=1):  # the analysts' Teams channel (v0.22.0), optional
+        if a["id"] in mailed:
+            continue
         link = _review_url(a["id"]) or pipeline
         try:
             result = teams.notify(profile, a, number, len(index), link)
@@ -337,7 +353,20 @@ def cmd_watch(args: argparse.Namespace) -> int:
             events.append(journal.event("analysts", a, to=["teams"], result=result))
     journal.append(log_path, events)
     journal.publish(log_path, out)
+    print(f"  {phases.line()}")  # v0.26.0: which phase took the time, and the memory it needed
     return 3 if errors else 0
+
+
+def _already_mailed(path: str | None) -> set[str]:
+    """The alert ids of `path` (a JSON list), empty when there is no such file: what an earlier
+    passage has already mailed to the analysts (v0.26.0)."""
+    if not path or not Path(path).is_file():
+        return set()
+    try:
+        return {str(i) for i in json.loads(Path(path).read_text(encoding="utf-8"))}
+    except (ValueError, OSError) as exc:
+        print(f"  WARN  --mailed unreadable ({exc}): the alerts may be mailed again", file=sys.stderr)
+        return set()
 
 
 def _review_url(alert_id: str) -> str:
@@ -629,6 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         help="the tenant's applications table (v0.23.3): a JSON file, or auto (applications.yaml of the project)",
     )
     w.add_argument("--proposals", help="where to write the LLM's proposals for the applications table (JSON)")
+    w.add_argument("--mailed", help="JSON list of alert ids already mailed to the analysts: not mailed again")
     w.set_defaults(func=cmd_watch)
     s = sub.add_parser("send", help="mail the alerts of a watch run to the client")
     s.add_argument("profile", help="client.yaml")
