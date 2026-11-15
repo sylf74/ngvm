@@ -5,6 +5,22 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.9 — 2026-11-15
+
+A fix of the GitLab agent installed by the platform.
+
+- **GitLab's CA**: given to the agent's chart as `config.kasCaCert`. The chart dropped `caCert` in
+  its 2.0.0 without an alias, and Helm ignores a value a chart does not know: the agent trusted no
+  private CA, looped on `certificate signed by unknown authority`, and every `deploy-k8s` of a
+  tenant failed on `finding tunnel timed out` — while the apply reported success.
+- **The CA is checked** against `kas_address` before the install; one that does not validate it
+  stops the step and says what to give instead.
+
+**Upgrade**: a cluster whose agent was installed by v0.25.1 to v0.25.8 with a `ca_file`: apply
+again (`revision` bumped) so the agent is reinstalled with the CA, or
+`helm -n gitlab-agent-<name> upgrade <name> gitlab/gitlab-agent -f <its values> --set-file
+config.kasCaCert=<ca>` to fix it in place.
+
 ## v0.25.8 — 2026-11-15
 
 Two fixes found while deploying the tenants on a cluster made by OpenTofu.
