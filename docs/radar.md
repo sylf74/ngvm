@@ -109,6 +109,14 @@ tell the tenants apart. Create it once, as a masked and protected variable of th
 | `NGVM_INTEL_TOKEN` | 64 random hexadecimal characters (`openssl rand -hex 32`) |
 | `NGVM_INTEL_URL` | `http://ngvm-via-intel.ngvm-via.svc:8080` |
 
+Its volume holds the cache of the sources: 5 Gi by default since v0.26.0 (`NGVM_INTEL_SIZE`), where
+1 Gi was not enough. The offline archives of OSV alone approach a gigabyte, and when the volume
+filled, a cache file was written truncated and read as fresh for ever: the watch of every tenant
+failed for two days. The service now writes a cache file whole or not at all, fetches again one it
+cannot read, says a full volume in clear, removes every hour the files nothing reads any more, and
+reports the room left (its log, `/v1/status`, and `get_platform_status` of the chat, which warns
+above 85 % used).
+
 The deployment of the project `via` writes the digest of that token, and of its own radar token,
 into the Secret `ngvm-intel`. A tenant that must be revoked alone gets its own token: its digest
 (`printf '%s' "$TOKEN" | sha256sum`) as a line `read <sha256>` of the File variable

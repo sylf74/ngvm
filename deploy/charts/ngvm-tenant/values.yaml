@@ -297,10 +297,12 @@ watch:
     requests: {cpu: 20m, memory: 64Mi}
     limits: {memory: 512Mi}   # 256Mi up to v0.23.17: an inventory of 50 MB did not fit
   run:
-    activeDeadlineSeconds: 900
+    # 900 s and 1Gi up to v0.25.x: a passage crossing 5 300 records and their package advisories with
+    # 26 000 findings was killed for memory, then ran out of time (NGVM_WATCH_MEMORY, _DEADLINE).
+    activeDeadlineSeconds: 1800
     resources:
       requests: {cpu: 100m, memory: 256Mi}
-      limits: {memory: 1Gi}
+      limits: {memory: 2Gi}
   # The review page of the alerts (v0.17.0, LLD intelligence §3.8): served by via serve on port 8081,
   # behind oauth2-proxy, which signs the analysts in with the tenant's identity provider (oidc.*).
   # Readers read the alerts; validators also correct, validate and dismiss. A sender mails the
@@ -354,7 +356,9 @@ intel:
     # Namespaces whose daily run, watch and sender may call it; empty: every namespace of the cluster.
     allowNamespaces: []
     storage:
-      size: 1Gi
+      # 1Gi up to v0.25.x: the cache of the sources (the offline archives of OSV above all) filled it,
+      # a cache file was written truncated, and the watch of every tenant failed (NGVM_INTEL_SIZE).
+      size: 5Gi
       storageClass: ""
     resources:
       requests: {cpu: 50m, memory: 128Mi}

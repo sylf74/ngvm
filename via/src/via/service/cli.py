@@ -138,6 +138,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 f"{args.tenant}: state {'from the service' if state else 'none yet (baseline)'}, "
                 f"inventory {'from the last daily run' if has_inventory else 'none yet: declared assets only'}"
             )
+            # What earlier passages already mailed: the service keeps the journal, so a passage that
+            # died after its mails does not make this one mail the same alerts again (v0.26.0).
+            mailed = sorted(
+                a["id"]
+                for a in client.alerts("all")
+                if any(e.get("event") == "analysts" and e.get("result") for e in a.get("events") or [])
+            )
+            (work / "mailed.json").write_text(json.dumps(mailed), encoding="utf-8")
             code = watch(
                 argparse.Namespace(
                     profile=args.profile,
@@ -152,6 +160,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                     inventory=str(work / "inventory") if has_inventory else "none",
                     applications=str(work / "applications.json"),
                     proposals=str(work / "proposals.json"),
+                    mailed=str(work / "mailed.json"),
                 )
             )
             if code not in (0, 3):

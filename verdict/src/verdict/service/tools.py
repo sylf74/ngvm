@@ -1039,6 +1039,7 @@ class Tools:
             for c in detect.get("collectors", []) for x in c.get("sources", [])
             if x.get("stale") or x.get("last_error")
         ]  # fmt: skip
+        intel = self._json(self._intel, "/v1/status", "shared intelligence service") if self._intel else {}
         answer = {
             "tenant": self.tenant,
             "services": {
@@ -1061,6 +1062,15 @@ class Tools:
             "upgrade in progress or a pod that did not restart",
             "source": "NGVM services of this tenant",
         }
+        volume = intel.get("volume") if isinstance(intel, dict) else None
+        if isinstance(volume, dict) and "used_percent" in volume:  # v0.26.0; an older service has no /v1/status
+            answer["shared_intelligence_volume"] = {
+                "used_percent": volume["used_percent"],
+                "free_gb": round(volume["free_bytes"] / 1e9, 1),
+                "note": "above 85 % used: the cache of the sources is short of room, the watch may fail"
+                if volume.get("alert")
+                else "enough room",
+            }
         return fit(answer, self.max_chars)
 
     # -- documents ------------------------------------------------------------------------------

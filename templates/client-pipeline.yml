@@ -13,7 +13,7 @@
 #
 #     include:
 #       - project: vulnops/ngvm
-#         ref: v0.25.10
+#         ref: v0.26.0
 #         file: templates/client-pipeline.yml
 #     variables:
 #       NGVM_REF: v0.19.0        # same version as the include
@@ -34,6 +34,8 @@
 #                            (nginx, traefik), NGVM_INTAKE_CLUSTER_ISSUER: its push endpoint (docs/collectors.md)
 #   NGVM_VERDICT_SERVICE  false: no decision service in the cluster (default true; docs/kubernetes.md)
 #   NGVM_VERDICT_MEMORY   memory limit of the decision service (default 2Gi, v0.23.18; docs/kubernetes.md)
+#   NGVM_WATCH_MEMORY     memory limit of a watch passage (default 2Gi, v0.26.0), NGVM_WATCH_DEADLINE its
+#                            seconds (default 1800); NGVM_INTEL_SIZE the volume of the shared service's cache
 #   NGVM_WATCH_MAX_MB     largest inventory the watch service accepts, in MB (default 50, v0.23.18)
 #   NGVM_DATABASE         true: the tenant's PostgreSQL (CloudNativePG) for the services, instead of
 #                            their volumes; NGVM_DATABASE_SIZE, _STORAGE_CLASS, _INSTANCES (docs/kubernetes.md §5)
@@ -305,6 +307,16 @@ deploy-k8s:
           if ! echo "$NGVM_WATCH_MAX_MB" | grep -qE '^[1-9][0-9]*$'; then echo "NGVM_WATCH_MAX_MB: a number of MB, such as 100"; exit 1; fi
           WATCH="$WATCH --set watch.maxMb=$NGVM_WATCH_MAX_MB"
         fi
+        # The memory of a watch passage and the time it is given (v0.26.0): it crosses the records
+        # of the day with every finding, and it was killed at 1Gi on 26 000 findings.
+        if [ -n "${NGVM_WATCH_MEMORY:-}" ]; then
+          if ! echo "$NGVM_WATCH_MEMORY" | grep -qE '^[1-9][0-9]*(Mi|Gi)$'; then echo "NGVM_WATCH_MEMORY: a size such as 2Gi or 1536Mi"; exit 1; fi
+          WATCH="$WATCH --set-string watch.run.resources.limits.memory=$NGVM_WATCH_MEMORY"
+        fi
+        if [ -n "${NGVM_WATCH_DEADLINE:-}" ]; then
+          if ! echo "$NGVM_WATCH_DEADLINE" | grep -qE '^[1-9][0-9]*$'; then echo "NGVM_WATCH_DEADLINE: a number of seconds, such as 1800"; exit 1; fi
+          WATCH="$WATCH --set watch.run.activeDeadlineSeconds=$NGVM_WATCH_DEADLINE"
+        fi
         TPL=""; for t in templates/alert*.docx; do if [ -f "$t" ]; then TPL="$TPL --from-file=$(basename "$t")=$t"; fi; done
         if [ -n "$TPL" ]; then
           kubectl -n "$NS" create configmap ngvm-alert-template $TPL --dry-run=client -o yaml | upsert
@@ -354,6 +366,11 @@ deploy-k8s:
         kubectl -n "$NS" create secret generic ngvm-intel --from-file=digests="$N/digests" --dry-run=client -o yaml | upsert
         INTEL="$INTEL --set intel.serve.enabled=true --set intel.serve.digestsSecret=ngvm-intel"
         INTEL="$INTEL --set intel.serve.digestsChecksum=$(sha256sum "$N/digests" | cut -d' ' -f1)"
+        # The volume of the service's cache (v0.26.0): 1Gi full stopped the watch of every tenant.
+        if [ -n "${NGVM_INTEL_SIZE:-}" ]; then
+          if ! echo "$NGVM_INTEL_SIZE" | grep -qE '^[1-9][0-9]*(Mi|Gi)$'; then echo "NGVM_INTEL_SIZE: a size such as 10Gi"; exit 1; fi
+          INTEL="$INTEL --set intel.serve.storage.size=$NGVM_INTEL_SIZE"
+        fi
         echo "NGVM_INTEL_SERVE=true: the shared intelligence service runs in $NS ($(grep -c '^read ' "$N/digests") read token(s))"
       fi
     # A development identity provider (v0.23.15, docs/dev-idp.md), with NGVM_DEV_IDP_HOST and without

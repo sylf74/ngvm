@@ -41,6 +41,7 @@ def test_the_ingress_has_a_service_of_its_own(tmp_path) -> None:
 def test_the_step_checks_what_it_made() -> None:
     script = SCRIPT.read_text()
     assert "CrashLoopBackOff|Error" in script and "Ceph: pods that do not start" in script
+    assert '"$health" != HEALTH_ERR' in script and "WARN Ceph is $health" in script  # v0.26.0: no wait for HEALTH_OK
     assert "did not get $METALLB_INGRESS_IP from MetalLB" in script
     assert "kubectl -n kube-system delete helmchartconfig" in script  # the one v0.25.1 left
 

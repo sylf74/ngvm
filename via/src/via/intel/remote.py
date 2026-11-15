@@ -17,8 +17,12 @@ import httpx
 from ngvm.config import env
 from ngvm.models import VulnRecord
 
-TIMEOUT = 120.0
-BATCH = 2000  # CVE ids per request
+# A request of 2 000 CVE ids with the package advisories took more than 120 s on a cold cache: the
+# watch gave up, read every source itself (about 9 minutes), ran out of time, and the service
+# finished the request for nobody. Smaller batches answer within the timeout, each one that
+# succeeds is kept, and a batch that fails loses only itself (v0.26.0).
+TIMEOUT = 180.0
+BATCH = 400  # CVE ids per request
 
 
 class IntelError(RuntimeError):
@@ -81,11 +85,18 @@ class IntelClient:
         records: list[VulnRecord] = []
         errors: list[dict[str, str]] = []
         notes: list[str] = []
-        for i in range(0, len(cve_ids), BATCH):
+        batches = range(0, len(cve_ids), BATCH)
+        for n, i in enumerate(batches, start=1):
             body: dict[str, Any] = {"cves": cve_ids[i : i + BATCH]}
             if packages:
                 body["packages"] = True
-            data = self._call("POST", "/v1/records", json=body)
+            try:
+                data = self._call("POST", "/v1/records", json=body)
+            except IntelError as exc:  # v0.26.0: the batches that answered are kept
+                if n == 1:
+                    raise
+                notes.append(f"intel: batch {n} of {len(batches)} failed ({exc}); {len(records)} records kept")
+                break
             try:
                 records += [VulnRecord.from_dict(r) for r in data["records"]]
             except (KeyError, TypeError) as exc:

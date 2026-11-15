@@ -16,9 +16,12 @@ request that carries credentials (GTI's key) never goes through the relay.
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import hashlib
 import json
+import os
 import re
+import sys
 import time
 from collections import Counter
 from pathlib import Path
@@ -83,6 +86,62 @@ class SourceAuthError(SourceError):
     """The source refused the credentials (HTTP 401 / 403): stop asking it for this run."""
 
 
+class CacheFullError(SourceError):
+    """The volume of the cache is full: said as it is, not as a trace of a file half written."""
+
+
+CACHE_SUFFIXES = (".json", ".txt", ".none", ".tmp")
+
+
+def write_cache(path: Path, text: str) -> None:
+    """Write a cache file whole or not at all (a temporary file, then a rename): a reader never
+    finds half a file, as a full volume left the KEV's (v0.26.0)."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        if exc.errno in (errno.ENOSPC, errno.EDQUOT):
+            raise CacheFullError(
+                f"the cache volume is full ({path.parent}): no space left to keep what the sources "
+                "answer; give it more room (NGVM_INTEL_SIZE for the shared service) or empty it"
+            ) from exc
+        raise
+
+
+def purge_cache(cache_dir: str | Path, max_age_hours: float, now: float | None = None) -> tuple[int, int, int]:
+    """Remove the cache files older than `max_age_hours`: nothing reads them any more, and one file
+    per request never removed filled the volume. (files removed, files kept, bytes kept)."""
+    now = time.time() if now is None else now
+    removed = kept = size = 0
+    root = Path(cache_dir)
+    if not root.is_dir():
+        return 0, 0, 0
+    for entry in os.scandir(root):
+        if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(CACHE_SUFFIXES):
+            continue
+        try:
+            stat = entry.stat(follow_symlinks=False)
+            if now - stat.st_mtime > max_age_hours * 3600:
+                os.unlink(entry.path)
+                removed += 1
+            else:
+                kept += 1
+                size += stat.st_size
+        except OSError:
+            continue  # removed meanwhile by another pass
+    return removed, kept, size
+
+
+def cache_validity_hours(settings: SourceSettings) -> float:
+    """The longest time a cache file is read again: older, it is only room taken."""
+    return max(
+        settings.cve_cache_hours, settings.feed_cache_hours, settings.gti_cache_hours, settings.packages_cache_hours
+    )
+
+
 def cve_bucket(cve_id: str) -> tuple[str, str]:
     m = CVE_ID.match(cve_id)
     if not m:
@@ -110,11 +169,24 @@ class Sources:
         )
         self._kev: dict[str, dict[str, Any]] | None = None
         self.gti_calls = 0  # network lookups made to GTI in this run (cache hits excluded)
+        self.cache_repaired = 0  # cache files found unreadable and fetched again (v0.26.0)
+        self.cache_full = ""  # why the cache keeps nothing more in this run ("" when it does)
         self.epss_dates: dict[str, str] = {}  # cve -> day of its EPSS score (since v0.15.2)
 
     # -- plumbing ---------------------------------------------------------------------------
     def _cache_path(self, url: str) -> Path:
         return self.cache / (hashlib.sha256(url.encode()).hexdigest()[:32] + ".json")
+
+    def _keep(self, path: Path, text: str) -> None:
+        """Keep an answer in the cache. On a full volume the answer is still used, only not kept:
+        said once, in clear, and in the notes of the collection."""
+        if self.cache_full:
+            return
+        try:
+            write_cache(path, text)
+        except CacheFullError as exc:
+            self.cache_full = str(exc)
+            print(f"WARN {exc}", file=sys.stderr)
 
     def _cached(self, key: str, max_age_hours: float) -> Path | None:
         path = self._cache_path(key)
@@ -133,7 +205,12 @@ class Sources:
         key = url + ("?" + json.dumps(params, sort_keys=True) if params else "")
         path = self._cache_path(key)
         if self._cached(key, max_age_hours):
-            return json.loads(path.read_text(encoding="utf-8"))
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):  # half written before v0.26.0, or damaged: as if absent
+                path.unlink(missing_ok=True)
+                self.cache_repaired += 1
+                print(f"WARN cache unreadable, fetched again: {path.name} ({url})", file=sys.stderr)
         for attempt in range(retries_429 + 1):
             try:
                 resp = self._client.get(url, params=params, headers=headers)
@@ -150,8 +227,7 @@ class Sources:
         if resp.status_code >= 400:
             raise SourceError(f"GET {url}: HTTP {resp.status_code}")
         data = resp.json()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data), encoding="utf-8")
+        self._keep(path, json.dumps(data))
         return data
 
     def get_text(self, url: str, max_age_hours: float) -> str:
@@ -164,8 +240,7 @@ class Sources:
             raise SourceError(f"GET {url}: {exc}") from exc
         if resp.status_code >= 400:
             raise SourceError(f"GET {url}: HTTP {resp.status_code}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(resp.text, encoding="utf-8")
+        self._keep(path, resp.text)
         return resp.text
 
     def _fixture(self, name: str) -> Any:
@@ -302,8 +377,7 @@ class Sources:
             return None
         data = self._get_json(url, hours)
         if data is None:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("", encoding="utf-8")
+            self._keep(marker, "")
         return data
 
     # -- Google Threat Intelligence ---------------------------------------------------------------
