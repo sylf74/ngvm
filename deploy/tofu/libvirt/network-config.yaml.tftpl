@@ -5,7 +5,7 @@ ethernets:
       macaddress: "${mac}"
     addresses: [${address}]
     routes:
-      - to: default
+      - to: ${strcontains(gateway, ":") ? "::/0" : "0.0.0.0/0"}
         via: ${gateway}
     nameservers:
       addresses: [${join(", ", dns)}]

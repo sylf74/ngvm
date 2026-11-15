@@ -5,6 +5,17 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.4 — 2026-11-15
+
+A fix of the Rocky VMs on KVM hosts.
+
+- **Default route of a VM**: written `0.0.0.0/0` (`::/0` for an IPv6 gateway) in cloud-init's
+  network-config. The cloud-init of Rocky 10 failed on `to: default` and then applied nothing: the
+  VM kept a DHCP address, had no hostname and no administrator. This was the cause of the Rocky
+  VMs without network; the fixed MAC address of v0.25.3 stays, but did not fix it.
+
+**Upgrade**: nothing for a tenant. A VM whose step failed is made again by the next apply.
+
 ## v0.25.3 — 2026-11-15
 
 A fix of the VMs on KVM hosts.
