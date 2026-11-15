@@ -5,6 +5,20 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.6 — 2026-11-15
+
+A fix of RKE2 on Rocky Linux 10.
+
+- **Kernel modules**: the RKE2 step installs `kernel-modules-extra` for the running kernel before
+  the service starts, and loads `br_netfilter` now and at every boot. The cloud image of Rocky
+  Linux 10 leaves there the netfilter modules (`xt_conntrack`, `xt_comment`, `br_netfilter`)
+  kube-proxy and the CNI need: kube-proxy set no rule, the CNI could not reach the API by its
+  service address, flannel stopped, and the node never got Ready. When the repositories no longer
+  have the package for that kernel, the step stops and says what to do.
+
+**Upgrade**: nothing for a tenant. A node whose RKE2 started without the modules: remove RKE2 from
+it (`rke2-uninstall.sh`) before the next apply, or make its VM again.
+
 ## v0.25.5 — 2026-11-15
 
 A fix of the VMs on KVM hosts.
