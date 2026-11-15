@@ -131,11 +131,12 @@ def test_metallb_puts_the_ingress_on_its_address(tmp_path) -> None:
     manifests = (root / "manifests.yaml").read_text()
     assert "kind: IPAddressPool" in manifests and "    - 192.0.2.200-192.0.2.220\n" in manifests
     assert "kind: L2Advertisement" in manifests and "ipAddressPools: [ngvm]" in manifests
-    assert "name: rke2-traefik\n  namespace: kube-system" in manifests
-    assert "      type: LoadBalancer\n      annotations:\n        metallb.io/loadBalancerIPs: 192.0.2.200" in manifests
+    assert "name: ngvm-ingress-lb\n  namespace: kube-system" in manifests  # its own Service since v0.25.7
+    assert "metallb.io/loadBalancerIPs: 192.0.2.200" in manifests
+    assert "app.kubernetes.io/name: rke2-traefik" in manifests
     work, root = _work(tmp_path / "2", "addons", ROOK | {"STORAGE": "none", "INGRESS": "ingress-nginx"}, {}, UBUNTU)
     assert _run("addons.sh", work, root).returncode == 0
-    assert "name: rke2-ingress-nginx" in (root / "manifests.yaml").read_text()
+    assert "app.kubernetes.io/name: rke2-ingress-nginx" in (root / "manifests.yaml").read_text()
 
 
 def test_the_libvirt_root_needs_no_provider() -> None:
