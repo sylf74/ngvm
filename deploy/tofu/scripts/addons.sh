@@ -80,7 +80,10 @@ if [ "${STORAGE:-local-path}" = rook-ceph ]; then
   if [ -n "${TOLERATE:-}" ]; then
     tolerations="[$(printf '%s' "$TOLERATE" | awk -F, '{for (i = 1; i <= NF; i++) printf "%s{key: \"%s\", operator: Exists}", (i > 1 ? ", " : ""), $i}')]"
   fi
+  # hostpathRequiresPrivileged: on a node with SELinux (Rocky), a Ceph pod that is not privileged
+  # may not write to /var/lib/rook (container_t on container_var_lib_t) and never starts.
   cat > "$WORK/rook-operator.yaml" <<ROOK_OPERATOR
+hostpathRequiresPrivileged: true
 csi:
   provisionerTolerations: $tolerations
   pluginTolerations: $tolerations
@@ -138,8 +141,18 @@ ROOK_CLUSTER
     -f "$WORK/rook-cluster.yaml" --timeout 15m
   if [ -z "$ROOT" ]; then
     log "waiting for the Ceph cluster (30 minutes at most)"
-    kubectl -n rook-ceph wait cephcluster/rook-ceph --for=jsonpath='{.status.phase}'=Ready --timeout 30m
-    kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.ceph.health}{"\n"}'
+    phase="" health="" failing=""
+    for _ in $(seq 180); do
+      phase=$(kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.phase}' 2> /dev/null || true)
+      health=$(kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.ceph.health}' 2> /dev/null || true)
+      failing=$(kubectl -n rook-ceph get pods --no-headers 2> /dev/null | awk '$3 ~ /CrashLoopBackOff|Error/ {print $1}' | tr '\n' ' ')
+      if [ "$phase" = Ready ] && [ "$health" = HEALTH_OK ] && [ -z "$failing" ]; then break; fi
+      sleep 10
+    done
+    [ -z "$failing" ] || fail "Ceph: pods that do not start: $failing(kubectl -n rook-ceph logs <pod> --all-containers)"
+    [ "$phase" = Ready ] || fail "Ceph: the cluster is $phase after 30 minutes (kubectl -n rook-ceph get cephcluster)"
+    [ "$health" = HEALTH_OK ] || log "WARN Ceph is $health (kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.ceph.details}')"
+    log "Ceph cluster $phase, $health"
   fi
 fi
 
@@ -172,27 +185,44 @@ spec:
     sleep 10
   done
   [ "$applied" = true ] || fail "MetalLB: the address pool was refused (its webhook not ready?)"
+  # The ingress on its address: a Service of our own (ngvm-ingress-lb) in front of RKE2's ingress
+  # pods, selected as their workload selects them. RKE2's chart is left as it is: a HelmChartConfig
+  # that turned its Service into a LoadBalancer made the chart fail (v0.25.1).
   if [ "${INGRESS:-ingress-nginx}" = traefik ]; then
-    chart=rke2-traefik
-    values="    service:
-      enabled: true
-      type: LoadBalancer
-      annotations:
-        metallb.io/loadBalancerIPs: $METALLB_INGRESS_IP
-      spec:
-        externalTrafficPolicy: Local"
+    chart=rke2-traefik workload=rke2-traefik http=web https=websecure
   else
-    chart=rke2-ingress-nginx
-    values="    controller:
-      service:
-        enabled: true
-        type: LoadBalancer
-        annotations:
-          metallb.io/loadBalancerIPs: $METALLB_INGRESS_IP
-        externalTrafficPolicy: Local"
+    chart=rke2-ingress-nginx workload=rke2-ingress-nginx-controller http=http https=https
   fi
-  printf 'apiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: %s\n  namespace: kube-system\nspec:\n  valuesContent: |-\n%s\n' \
-    "$chart" "$values" | apply_stdin > /dev/null
+  selector="    app.kubernetes.io/name: $chart"
+  if [ -z "$ROOT" ]; then
+    if kubectl -n kube-system get helmchartconfig "$chart" -o jsonpath='{.spec.valuesContent}' 2> /dev/null | grep -q 'metallb.io/loadBalancerIPs'; then
+      log "the HelmChartConfig of v0.25.1 for $chart removed"
+      kubectl -n kube-system delete helmchartconfig "$chart" > /dev/null
+    fi
+    selector=""
+    for _ in $(seq 60); do
+      for kind in daemonset deployment; do
+        # shellcheck disable=SC2016
+        selector=$(kubectl -n kube-system get "$kind" "$workload" \
+          -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{printf "    %s: %s\n" $k $v}}{{end}}' 2> /dev/null || true)
+        [ -z "$selector" ] || break 2
+      done
+      sleep 10
+    done
+    [ -n "$selector" ] || fail "the ingress $workload is not there after 10 minutes: kubectl -n kube-system get pods | grep $chart"
+  fi
+  printf 'apiVersion: v1\nkind: Service\nmetadata:\n  name: ngvm-ingress-lb\n  namespace: kube-system\n  annotations:\n    metallb.io/loadBalancerIPs: %s\nspec:\n  type: LoadBalancer\n  externalTrafficPolicy: Local\n  selector:\n%s\n  ports:\n    - {name: http, port: 80, targetPort: %s}\n    - {name: https, port: 443, targetPort: %s}\n' \
+    "$METALLB_INGRESS_IP" "$selector" "$http" "$https" | apply_stdin > /dev/null
+  if [ -z "$ROOT" ]; then
+    got=""
+    for _ in $(seq 30); do
+      got=$(kubectl -n kube-system get svc ngvm-ingress-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2> /dev/null || true)
+      [ "$got" != "$METALLB_INGRESS_IP" ] || break
+      sleep 10
+    done
+    [ "$got" = "$METALLB_INGRESS_IP" ] || fail "the ingress did not get $METALLB_INGRESS_IP from MetalLB (kubectl -n kube-system describe svc ngvm-ingress-lb)"
+    log "ingress on $METALLB_INGRESS_IP"
+  fi
 fi
 
 if [ "${CERT_MANAGER:-true}" = true ]; then
