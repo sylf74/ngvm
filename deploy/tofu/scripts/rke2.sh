@@ -40,6 +40,27 @@ trust_cas
 if [ "$FAMILY" = debian ]; then install_packages curl tar ca-certificates; else install_packages curl tar; fi
 [ "${STORAGE:-}" != rook-ceph ] || install_packages lvm2
 
+# kube-proxy and the CNI need netfilter modules (xt_conntrack, xt_comment, br_netfilter) that the
+# cloud images of RHEL 10 and its derivatives leave in kernel-modules-extra: without them
+# kube-proxy sets no rule, the service address of the API does not answer, flannel stops, and the
+# node never gets Ready. The package of the running kernel, before RKE2 starts; br_netfilter
+# loaded now and at every boot.
+if [ "$FAMILY" = rhel ]; then
+  if [ -n "$ROOT" ]; then
+    printf 'RUN ensure kernel modules xt_conntrack xt_comment\n' >> "$ROOT/commands.log"
+  elif ! modinfo xt_conntrack > /dev/null 2>&1 || ! modinfo xt_comment > /dev/null 2>&1 ||
+    ! modinfo br_netfilter > /dev/null 2>&1; then
+    kernel=$(uname -r)
+    log "kernel-modules-extra for the kernel $kernel"
+    dnf install -y -q "kernel-modules-extra-$kernel" ||
+      fail "no kernel-modules-extra for the running kernel $kernel: dnf install -y kernel kernel-modules-extra, reboot, apply again"
+    modinfo xt_conntrack > /dev/null 2>&1 || fail "xt_conntrack still missing for the kernel $kernel"
+    RESTART=0
+  fi
+  printf 'br_netfilter\n' | put 0644 /etc/modules-load.d/ngvm-rke2.conf || true
+  run modprobe br_netfilter
+fi
+
 if [ "${DISABLE_FIREWALL:-true}" = true ]; then
   for fw in firewalld ufw; do
     if [ -z "$ROOT" ] && systemctl is-active --quiet "$fw" 2>/dev/null; then

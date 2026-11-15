@@ -212,7 +212,8 @@ names, netplan (Ubuntu) takes either (v0.25.3). The default route is written `0.
 for an IPv6 gateway): the cloud-init of Rocky 10 fails on `to: default` and then applies nothing,
 not even the administrator (v0.25.4). The step then waits up to 10 minutes for the VM's
 SSH port and stops on a VM that does not answer; a VM made again runs every step of the platform
-again. The domain is marked `ngvm:<name>` in its description:
+again. A VM whose making failed is kept for a look at it (`virsh console`), and the next apply
+removes it and makes it again (v0.25.5). The domain is marked `ngvm:<name>` in its description:
 
 - a VM that exists is left as it is: a change of `vcpu`, `memory_mb` or `disk_gb` is not applied
   (do it with `virsh`); a change of `hypervisor`, `os` or `address` makes the VM again, its disks
@@ -222,7 +223,10 @@ again. The domain is marked `ngvm:<name>` in its description:
 - a domain of the same name that NGVM did not make stops the step: remove it first.
 
 Rocky Linux 10 needs x86-64-v3 (AVX2): on an older CPU, `os = "ubuntu"`. A node's `taints` and
-`labels` go to RKE2 (`node-taint`, `node-label`). The cluster starts on a server without a
+`labels` go to RKE2 (`node-taint`, `node-label`). On Rocky Linux 10 the step installs
+`kernel-modules-extra` for the running kernel before RKE2 starts and loads `br_netfilter`
+(v0.25.6): the cloud image leaves there the netfilter modules kube-proxy and the CNI need, and
+without them the node never gets Ready. The cluster starts on a server without a
 `NoSchedule` or `NoExecute` taint, and the tainted servers join last (v0.25.2): RKE2's
 helm-install jobs, the network among them, do not tolerate the operator's taints, so a tainted
 first server never gets Ready. Leave at least one server without such a taint.
