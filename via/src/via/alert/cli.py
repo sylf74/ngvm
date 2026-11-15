@@ -291,10 +291,23 @@ def cmd_watch(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         contacts, errors = [], [*errors, "contacts.yaml invalid"]
     analysts = _recipients(env("ANALYST_TO"))
-    # Alerts an earlier passage already mailed (v0.26.0): a passage killed after its mails and before
-    # it kept its state made the next one draft and mail them again, and the analyst got each alert
-    # as many times as the watch failed. At most one mail per alert, whatever happens next.
+    # At most one mail per alert (v0.26.0). A passage killed after its mails and before it kept its
+    # state made the next one draft and mail them again, and the analyst got each alert as many
+    # times as the watch failed. So what has been mailed is read first (--mailed), and each mail is
+    # recorded as it is sent, in the journal and in the service (on_event), not at the end of the
+    # passage: a passage that dies between two mails loses neither.
     mailed = _already_mailed(getattr(args, "mailed", None))
+    sink = getattr(args, "on_event", None)
+
+    def record(entry: dict) -> None:
+        journal.append(log_path, [entry])
+        if sink is None:
+            return
+        try:
+            sink([entry])
+        except Exception as exc:  # noqa: BLE001 - the mail is sent; the passage must go on
+            print(f"  WARN  {entry.get('alert')}: mail sent, journal not kept by the service ({exc})", file=sys.stderr)
+
     pipeline = os.environ.get("CI_PIPELINE_URL", "")
     log_path = Path(args.journal) if args.journal else Path(args.state).parent / "alerts-log.jsonl"
     events = [journal.event("drafted", a, cves=a.get("cves")) for a in index]
@@ -332,11 +345,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
         try:
             result = send(msg, out / "outbox")
             print(f"  analysts: {result}")
-            events.append(journal.event("analysts", a, to=analysts, result=result))
+            record(journal.event("analysts", a, to=analysts, result=result))
         except MailError as exc:
             print(f"  ERROR mail to analysts: {exc}", file=sys.stderr)
             errors.append(str(exc))
-            events.append(journal.event("analysts", a, to=analysts, error=str(exc)))
+            record(journal.event("analysts", a, to=analysts, error=str(exc)))
     for number, a in enumerate(index, start=1):  # the analysts' Teams channel (v0.22.0), optional
         if a["id"] in mailed:
             continue
@@ -346,12 +359,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
         except teams.TeamsError as exc:
             print(f"  ERROR Teams: {exc}", file=sys.stderr)
             errors.append(str(exc))
-            events.append(journal.event("analysts", a, to=["teams"], error=str(exc)))
+            record(journal.event("analysts", a, to=["teams"], error=str(exc)))
             break
         if result:
             print(f"  analysts: {result}")
-            events.append(journal.event("analysts", a, to=["teams"], result=result))
-    journal.append(log_path, events)
+            record(journal.event("analysts", a, to=["teams"], result=result))
+    journal.append(log_path, events)  # the drafted alerts; the mails were recorded as they were sent
     journal.publish(log_path, out)
     print(f"  {phases.line()}")  # v0.26.0: which phase took the time, and the memory it needed
     return 3 if errors else 0
