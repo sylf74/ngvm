@@ -5,6 +5,18 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.2 — 2026-11-15
+
+A fix of the cluster's start with OpenTofu.
+
+- **First server**: the cluster starts on a server without a `NoSchedule` or `NoExecute` taint,
+  and the tainted servers join last. RKE2's helm-install jobs, the network among them, do not
+  tolerate the operator's taints: a tainted first server never got Ready. A check warns when
+  every server is tainted.
+
+**Upgrade**: nothing for a tenant. A cluster whose first start failed on a tainted server: remove
+RKE2 from that server (`rke2-uninstall.sh`) before the next apply.
+
 ## v0.25.1 — 2026-11-15
 
 The cluster rebuilt by OpenTofu on VMs of several KVM hosts, with Rook-Ceph and MetalLB.
