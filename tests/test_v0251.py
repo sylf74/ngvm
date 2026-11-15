@@ -159,9 +159,9 @@ def test_the_plan_of_the_libvirt_example(tmp_path) -> None:
     ]
     vm = changes['terraform_data.vm["cn0"]']["input"]
     assert vm["host"] == "192.0.2.10" and "NETWORK='ovs:ovs0'" in vm["env"] and "DATA_DISKS='200'" in vm["env"]
-    first = changes["module.platform.terraform_data.rke2_first[0]"]["triggers_replace"]["env"]
-    assert first["NODE_NAME"] == "cn0" and first["TAINTS"] == "example.org/no-avx2=true:NoSchedule"
-    assert first["LABELS"] == "topology.rook.io/chassis=hyp00"
+    tainted = changes["module.platform.terraform_data.rke2_third[0]"]["triggers_replace"]["env"]
+    assert tainted["NODE_NAME"] == "cn0" and tainted["TAINTS"] == "example.org/no-avx2=true:NoSchedule"
+    assert tainted["LABELS"] == "topology.rook.io/chassis=hyp00"
     addons = changes["module.platform.terraform_data.addons[0]"]["triggers_replace"]["env"]
     assert (
         addons["STORAGE"] == "rook-ceph"

@@ -216,7 +216,10 @@ the DNS. The domain is marked `ngvm:<name>` in its description:
 - a domain of the same name that NGVM did not make stops the step: remove it first.
 
 Rocky Linux 10 needs x86-64-v3 (AVX2): on an older CPU, `os = "ubuntu"`. A node's `taints` and
-`labels` go to RKE2 (`node-taint`, `node-label`).
+`labels` go to RKE2 (`node-taint`, `node-label`). The cluster starts on a server without a
+`NoSchedule` or `NoExecute` taint, and the tainted servers join last (v0.25.2): RKE2's
+helm-install jobs, the network among them, do not tolerate the operator's taints, so a tainted
+first server never gets Ready. Leave at least one server without such a taint.
 
 Read the credentials from where they are stored, never from a file of the repository:
 
