@@ -5,6 +5,38 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.26.0 — 2026-11-15
+
+The watch and the shared intelligence service made to hold, after the incident of 13 to 15
+November: the watch of every tenant failed for two days, then sent the analysts the same alerts
+again and again.
+
+- **The cache of the sources** is written whole or not at all (a temporary file, then a rename). A
+  full volume had left the KEV's cache file truncated, and it was read as fresh for ever: every
+  `POST /v1/records` answered 500 after eleven minutes. A file that cannot be read is now fetched
+  again (`WARN cache unreadable, fetched again`), and a full volume is said in clear instead of a
+  trace — the answer is still used, only not kept.
+- **The cache does not grow for ever**: every hour the service removes the files nothing reads any
+  more (31 589 files had piled up) and logs the size of the cache and the room left on its volume.
+  That room is also in `/v1/status` and in the chat's `get_platform_status`, with a warning above
+  85 % used. Its volume is 5Gi by default (`NGVM_INTEL_SIZE`), where 1Gi was not enough.
+- **An alert is mailed to the analysts at most once**: a passage killed after its mails and before
+  it kept its state made the next one mail the same alerts again. The service's journal now says
+  what was already mailed, and such an alert is left on the review page instead.
+- **Records in batches that answer**: 400 CVE ids per request instead of 2 000, and 180 s instead
+  of 120. A batch now answers within the timeout, the batches that answered are kept, and one that
+  fails loses only itself instead of sending the watch back to reading every source.
+- **A passage says what it cost**: its log ends with the duration of each phase (discover, match,
+  sheets) and the memory it needed. Its defaults are 2Gi and 1800 s (`NGVM_WATCH_MEMORY`,
+  `NGVM_WATCH_DEADLINE`), where 1Gi and 900 s killed it on 26 000 findings.
+
+**Still to do** (next version): the crossing done by batches rather than held whole in memory, and
+a service that stops the work of a client that has left.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.26.0`. The
+volume of the shared service grows at its next deployment if its storage class allows it
+(`ceph-block` does); a volume patched by hand keeps its size.
+
 ## v0.25.10 — 2026-11-15
 
 The storage of a cluster made by OpenTofu, found on the first tenant deployed on one.
