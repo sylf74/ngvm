@@ -28,6 +28,8 @@ locals {
     INGRESS_CLASS        = try(var.cluster.ingress, "ingress-nginx") == "traefik" ? "traefik" : "nginx"
     ROOK_VERSION         = var.addons.rook_version
     ROOK_CHART_REPO      = var.addons.rook_chart_repo
+    CSI_CHART_REPO       = var.addons.csi_chart_repo
+    CSI_DRIVERS_VERSION  = var.addons.csi_drivers_version
     ROOK_DEVICE_FILTER   = var.addons.rook_device_filter
     ROOK_FAILURE_DOMAIN  = var.addons.rook_failure_domain
     NODES                = tostring(length(local.rke2_nodes))
