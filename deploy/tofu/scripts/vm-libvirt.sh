@@ -8,6 +8,8 @@
 #   IMAGE_URL     cloud image (qcow2), downloaded once into POOL_DIR/ngvm-images
 #   POOL_DIR      where the disks of the VMs are (e.g. /mnt/virt)
 #   NETWORK       ovs:<bridge> (Open vSwitch), bridge:<bridge> (Linux bridge) or network:<name>
+#   MAC           the interface's MAC address (52:54:00:xx:xx:xx), matched by network-config
+#   ADDRESS       the VM's address: the step waits until its SSH port answers (10 minutes)
 #   DATA_DISKS    extra disks, ';'-separated: <size in GB> (a qcow2 in POOL_DIR) or dev:<path>
 #                 (a block device of the host, e.g. /dev/disk/by-id/…): for Rook-Ceph
 #   OSINFO        virt-install --osinfo (linux2022 by default; generic when unknown)
@@ -99,6 +101,10 @@ case "$NETWORK" in
   network:*) net="network=${NETWORK#network:},model=virtio" ;;
   *) fail "NETWORK: ovs:<bridge>, bridge:<bridge> or network:<name>" ;;
 esac
+if [ -n "${MAC:-}" ]; then
+  [[ "$MAC" =~ ^52:54:00(:[0-9a-f]{2}){3}$ ]] || fail "MAC: 52:54:00:xx:xx:xx"
+  net="$net,mac=$MAC"
+fi
 vcpus=$VCPU
 [ -z "${CPUSET:-}" ] || vcpus="$VCPU,cpuset=$CPUSET"
 osinfo=${OSINFO:-linux2022}
@@ -112,3 +118,13 @@ run virt-install --name "$NAME" --metadata "description=$MARK" --memory "$MEMORY
   --cloud-init "user-data=$WORK/user-data,network-config=$WORK/network-config" \
   --graphics none --console pty,target_type=serial --autostart --noautoconsole
 log "VM $NAME started"
+if [ -z "$ROOT" ] && [ -n "${ADDRESS:-}" ]; then
+  for _ in $(seq 120); do
+    if timeout 2 bash -c "exec 3<>/dev/tcp/$ADDRESS/22" 2> /dev/null; then
+      log "VM $NAME answers on $ADDRESS:22"
+      exit 0
+    fi
+    sleep 5
+  done
+  fail "VM $NAME not reachable on $ADDRESS:22 after 10 minutes (cloud-init, network-config): virsh console $NAME"
+fi

@@ -5,6 +5,20 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.3 — 2026-11-15
+
+A fix of the VMs on KVM hosts.
+
+- **Network of a VM**: each VM gets a fixed MAC address made from its name, and cloud-init's
+  network-config matches the interface by it. A match by a pattern of names, as before, is ignored
+  by NetworkManager: a Rocky VM booted without its address.
+- **VM step**: it waits up to 10 minutes for the VM's SSH port and stops on a VM that does not
+  answer, rather than leaving the next step to retry SSH.
+- **A VM made again** runs every step of the platform again (RKE2 and the rest are installed on it).
+
+**Upgrade**: nothing for a tenant. The VMs made by `deploy/tofu/libvirt` before v0.25.3 have no
+fixed MAC address: the next apply makes them again, with their disks.
+
 ## v0.25.2 — 2026-11-15
 
 A fix of the cluster's start with OpenTofu.

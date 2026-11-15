@@ -206,7 +206,11 @@ installed when missing): the cloud image of its `os` downloaded once into `<pool
 its disk copied from it and grown to `disk_gb`, its `data_disks` (a size in GB: a qcow2 next to it;
 a `device`: a block device of the host given whole, e.g. a disk of a former Ceph), its vCPUs on
 `cpuset` (the P-cores of a hybrid CPU), cloud-init for the administrator, the static address and
-the DNS. The domain is marked `ngvm:<name>` in its description:
+the DNS. The interface gets a fixed MAC address made from the VM's name, and cloud-init's
+network-config matches it by that address: NetworkManager (Rocky) ignores a match by a pattern of
+names, netplan (Ubuntu) takes either (v0.25.3). The step then waits up to 10 minutes for the VM's
+SSH port and stops on a VM that does not answer; a VM made again runs every step of the platform
+again. The domain is marked `ngvm:<name>` in its description:
 
 - a VM that exists is left as it is: a change of `vcpu`, `memory_mb` or `disk_gb` is not applied
   (do it with `virsh`); a change of `hypervisor`, `os` or `address` makes the VM again, its disks

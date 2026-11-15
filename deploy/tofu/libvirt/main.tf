@@ -12,9 +12,14 @@ locals {
     HTTPS_PROXY_URL = try(var.platform.network.https_proxy, "")
     NO_PROXY_LIST   = join(",", try(var.platform.network.no_proxy, []))
   }
+  # A fixed MAC address per VM, from its name: cloud-init's network-config matches the interface
+  # by it, with netplan (Ubuntu) as with NetworkManager (Rocky), whatever its name.
+  mac = { for n, m in var.machines : n => "52:54:00:${join(":", regexall("..", substr(md5(n), 0, 6)))}" }
   vm_env = {
     for n, m in var.machines : n => merge(local.proxy, {
       NAME       = n
+      MAC        = local.mac[n]
+      ADDRESS    = split("/", m.address)[0]
       VCPU       = tostring(m.vcpu)
       MEMORY_MB  = tostring(m.memory_mb)
       DISK_GB    = tostring(m.disk_gb)
@@ -37,11 +42,13 @@ check "hypervisors_of_machines" {
 
 resource "terraform_data" "vm" {
   for_each = var.machines
-  # what makes the VM again (and so loses its disks): its host, its system; not its size
+  # what makes the VM again (and so loses its disks): its host, its system, its address and MAC
+  # address (v0.25.3: a VM made before has no fixed MAC and is made again); not its size
   triggers_replace = {
     hypervisor = each.value.hypervisor
     os         = each.value.os
     address    = each.value.address
+    mac        = local.mac[each.key]
   }
   # what the removal needs (a destroy step reads only this)
   input = {
@@ -85,6 +92,7 @@ resource "terraform_data" "vm" {
   }
   provisioner "file" {
     content = templatefile("${path.module}/network-config.yaml.tftpl", {
+      mac     = local.mac[each.key]
       address = each.value.address
       gateway = var.gateway
       dns     = var.dns
@@ -143,5 +151,6 @@ module "platform" {
   collectors  = try(var.platform.collectors, {})
   keycloak    = try(var.platform.keycloak, {})
   secrets_dir = try(var.platform.secrets_dir, "~/.ngvm/secrets")
-  revision    = try(var.platform.revision, "1")
+  # a VM made again (a new id) runs every step again: RKE2 and the rest are installed on it
+  revision = "${try(var.platform.revision, "1")}-${substr(sha256(join(",", [for n in sort(keys(var.machines)) : terraform_data.vm[n].id])), 0, 12)}"
 }

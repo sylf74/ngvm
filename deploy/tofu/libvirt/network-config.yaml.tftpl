@@ -2,7 +2,7 @@ version: 2
 ethernets:
   primary:
     match:
-      name: "e*"
+      macaddress: "${mac}"
     addresses: [${address}]
     routes:
       - to: default
