@@ -170,7 +170,10 @@ deploy-k8s:
     # GitLab behind a private CA: kubectl reaches the cluster through GitLab (File variable).
     - if [ -n "${NGVM_K8S_CA:-}" ]; then kubectl config set-cluster gitlab --certificate-authority="$NGVM_K8S_CA"; fi
     - NS="${NGVM_K8S_NAMESPACE:-ngvm-$(echo "$CI_PROJECT_NAME" | tr 'A-Z_' 'a-z-')}"
-    - kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+    # No `kubectl apply` through the GitLab agent (v0.25.8): a client-side apply reads the cluster's
+    # OpenAPI schema, which the agent server refuses to serve (it accepts JSON, YAML and the
+    # Kubernetes protobuf only), so the job stopped on the namespace. `get` and `create` need none.
+    - kubectl get namespace "$NS" > /dev/null 2>&1 || kubectl create namespace "$NS"
     # Secrets and generated ConfigMaps are created or replaced, never `kubectl apply`d (v0.23.16): a
     # client-side apply copies the whole object into the annotation last-applied-configuration,
     # limited to 256 KiB, which a Secret with the CA bundle and a few certificates exceeds.
@@ -720,14 +723,14 @@ send-alerts-k8s:
       JOB="send-$CI_PIPELINE_ID"; EDITS=""; V="$(mktemp -d)"
       echo "alerts to send: ${ONLY:-the pending alerts of the latest watch}"
       if [ -d edits ] && [ -n "$(ls edits 2>/dev/null)" ]; then
-        kubectl -n "$NS" create configmap "ngvm-edits-$CI_PIPELINE_ID" --from-file=edits/ --dry-run=client -o yaml | kubectl apply -f -
+        kubectl -n "$NS" create configmap "ngvm-edits-$CI_PIPELINE_ID" --from-file=edits/
         EDITS="--set watch.send.editsConfigMap=ngvm-edits-$CI_PIPELINE_ID"
         echo "edits/: $(ls edits | wc -l) file(s) handed to the send job"
       fi
       helm get values ngvm -n "$NS" -o yaml > "$V/values.yaml"
       helm template ngvm .ngvm/deploy/charts/ngvm-tenant -n "$NS" -f "$V/values.yaml" \
         --set watch.send.job="$JOB" --set-string watch.send.only="$ONLY" $EDITS --show-only templates/watch.yaml \
-        | kubectl -n "$NS" apply -f -
+        | kubectl -n "$NS" create -f -
       rc=1
       for _ in $(seq 120); do
         state="$(kubectl -n "$NS" get job "$JOB" -o jsonpath='{.status.succeeded}/{.status.failed}')"
