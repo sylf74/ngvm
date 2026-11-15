@@ -95,10 +95,10 @@ The code project's own pipeline only runs lint, tests and the offline examples.
 ```yaml
 include:
   - project: vulnops/ngvm
-    ref: v0.25.6
+    ref: v0.25.7
     file: templates/client-pipeline.yml
 variables:
-  NGVM_REF: v0.25.6
+  NGVM_REF: v0.25.7
   NGVM_RUN_MODE: gitlab   # or kubernetes: docs/kubernetes.md §4
 ```
 

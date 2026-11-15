@@ -5,6 +5,22 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.7 — 2026-11-15
+
+Fixes of the addons of the cluster, found on the first cluster made from end to end.
+
+- **Rook-Ceph on Rocky**: the Ceph pods run privileged for their folder on the node
+  (`hostpathRequiresPrivileged`). SELinux refused it otherwise, and the mons, the manager and the
+  OSDs of the Rocky nodes never started.
+- **The ingress on its address**: a LoadBalancer Service of the platform,
+  `kube-system/ngvm-ingress-lb`, in front of RKE2's ingress pods. The HelmChartConfig of v0.25.1
+  made RKE2's chart fail, and the ingress was not installed at all; the step removes it.
+- **A step that checks**: the addons step waits for a Ceph cluster that is Ready with every pod
+  started, and for the ingress to get its address; it stops otherwise, where it used to end.
+
+**Upgrade**: nothing for a tenant. A cluster made with v0.25.1 to v0.25.6: apply again; the DNS of
+`*.apps` keeps the same address.
+
 ## v0.25.6 — 2026-11-15
 
 A fix of RKE2 on Rocky Linux 10.
