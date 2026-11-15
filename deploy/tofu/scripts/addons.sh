@@ -296,8 +296,11 @@ if [ "${AGENT:-false}" = true ]; then
   secret_from "$ns" gitlab-agent-token token=agent-token
   {
     printf 'config:\n  kasAddress: "%s"\n  secretName: gitlab-agent-token\n' "$KAS_ADDRESS"
+    # kasCaCert: the chart dropped caCert in its 2.0.0, without keeping it as an alias. Helm
+    # ignores a value a chart does not know, so the agent got no CA at all and looped on
+    # "certificate signed by unknown authority" (v0.25.9).
     if [ -s "$WORK/stage/gitlab-ca.pem" ]; then
-      echo "  caCert: |"
+      echo "  kasCaCert: |"
       sed 's/^/    /' "$WORK/stage/gitlab-ca.pem"
     fi
     if [ -n "${HTTP_PROXY_URL:-}" ]; then
@@ -305,6 +308,13 @@ if [ "${AGENT:-false}" = true ]; then
         "${HTTPS_PROXY_URL:-$HTTP_PROXY_URL}" "$NO_PROXY"
     fi
   } > "$WORK/agent-values.yaml"
+  # The CA is checked against the agent server first: a CA that does not validate it leaves pods
+  # looping with nothing an operator would see, and the cluster unusable from GitLab.
+  if [ -z "$ROOT" ] && [ -s "$WORK/stage/gitlab-ca.pem" ] && command -v curl > /dev/null 2>&1; then
+    rc=0
+    curl -sS --max-time 20 --cacert "$WORK/stage/gitlab-ca.pem" -o /dev/null "https://${KAS_ADDRESS#*://}" || rc=$?
+    [ "$rc" != 60 ] || fail "the CA of addons.gitlab_agent.ca_file does not validate $KAS_ADDRESS: give the CA that signed GitLab's certificate, with its intermediates if its chain is incomplete"
+  fi
   run helm repo add gitlab "$AGENT_CHART_REPO" --force-update > /dev/null
   version=()
   [ -z "${AGENT_VERSION:-}" ] || version=(--version "$AGENT_VERSION")

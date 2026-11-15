@@ -364,7 +364,7 @@ def test_the_addons_of_the_cluster(tmp_path) -> None:
     assert "RUN secret gitlab-agent-ngvm/gitlab-agent-token" in log and "glagent-x" not in log
     assert "acme:\n    email: ops@example.org" in (root / "manifests.yaml").read_text()
     values = (work / "agent-values.yaml").read_text()
-    assert "secretName: gitlab-agent-token" in values and "    -----BEGIN CERTIFICATE-----" in values
+    assert "secretName: gitlab-agent-token" in values and "    -----BEGIN CERTIFICATE-----" in values  # v0.25.9
     assert '{name: NO_PROXY, value: "192.0.2.0/24,127.0.0.1,localhost,.svc,.cluster.local"}' in values
 
 
