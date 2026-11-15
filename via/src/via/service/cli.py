@@ -161,6 +161,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
                     applications=str(work / "applications.json"),
                     proposals=str(work / "proposals.json"),
                     mailed=str(work / "mailed.json"),
+                    # Each mail kept by the service as it is sent, not at the end of the passage
+                    on_event=client.add_events,
                 )
             )
             if code not in (0, 3):
