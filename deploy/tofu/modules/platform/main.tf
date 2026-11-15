@@ -10,9 +10,14 @@ locals {
   secrets_dir  = pathexpand(var.secrets_dir)
   key          = var.ssh.private_key_file == "" ? null : file(pathexpand(var.ssh.private_key_file))
 
-  servers = sort([for n, h in var.hosts : n if contains(h.roles, "server")])
-  agents  = toset([for n, h in var.hosts : n if contains(h.roles, "agent")])
-  first   = length(local.servers) > 0 ? local.servers[0] : ""
+  # The first server starts the cluster alone: RKE2's helm-install jobs (the network among them)
+  # do not tolerate the operator's taints, so a server without a NoSchedule or NoExecute taint
+  # comes first, then the tainted ones.
+  all_servers = sort([for n, h in var.hosts : n if contains(h.roles, "server")])
+  blocked     = toset([for n in local.all_servers : n if length([for t in var.hosts[n].taints : t if !endswith(t, ":PreferNoSchedule")]) > 0])
+  servers     = concat([for n in local.all_servers : n if !contains(local.blocked, n)], [for n in local.all_servers : n if contains(local.blocked, n)])
+  agents      = toset([for n, h in var.hosts : n if contains(h.roles, "agent")])
+  first       = length(local.servers) > 0 ? local.servers[0] : ""
 
   # files every machine gets: the CAs, the registry CAs (stage name -> local path)
   common_stage = merge(
@@ -52,6 +57,13 @@ check "keycloak_host" {
   assert {
     condition     = var.keycloak.mode != "vm" || local.kc_host != null
     error_message = "keycloak.mode = vm needs one host with the role keycloak."
+  }
+}
+
+check "untainted_server" {
+  assert {
+    condition     = var.cluster == null || length(local.servers) == 0 || !contains(local.blocked, local.first)
+    error_message = "Every server has a NoSchedule or NoExecute taint: the first one cannot start the cluster's network. Leave one server without such a taint."
   }
 }
 
