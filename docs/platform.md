@@ -208,7 +208,9 @@ a `device`: a block device of the host given whole, e.g. a disk of a former Ceph
 `cpuset` (the P-cores of a hybrid CPU), cloud-init for the administrator, the static address and
 the DNS. The interface gets a fixed MAC address made from the VM's name, and cloud-init's
 network-config matches it by that address: NetworkManager (Rocky) ignores a match by a pattern of
-names, netplan (Ubuntu) takes either (v0.25.3). The step then waits up to 10 minutes for the VM's
+names, netplan (Ubuntu) takes either (v0.25.3). The default route is written `0.0.0.0/0` (`::/0`
+for an IPv6 gateway): the cloud-init of Rocky 10 fails on `to: default` and then applies nothing,
+not even the administrator (v0.25.4). The step then waits up to 10 minutes for the VM's
 SSH port and stops on a VM that does not answer; a VM made again runs every step of the platform
 again. The domain is marked `ngvm:<name>` in its description:
 
