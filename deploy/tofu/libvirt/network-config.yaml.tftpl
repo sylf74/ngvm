@@ -9,3 +9,6 @@ ethernets:
         via: ${gateway}
     nameservers:
       addresses: [${join(", ", dns)}]
+%{ if length(search) > 0 ~}
+      search: [${join(", ", search)}]
+%{ endif ~}

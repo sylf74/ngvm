@@ -1,62 +1,118 @@
 # SPDX-License-Identifier: LicenseRef-ngvm-proprietary
-# VMs on a bare KVM host (libvirt), then the platform on them (docs/platform.md §8). Static
-# addresses through cloud-init; the image of each system downloaded once into the pool.
+# VMs on KVM hosts with libvirt, made over SSH with virt-install (scripts/vm-libvirt.sh), then the
+# platform on them (docs/platform.md §8). Several hosts, Open vSwitch or Linux bridges, static
+# addresses by cloud-init, extra disks for Rook-Ceph. A VM is made once: a change of its size is
+# not applied to it; removing it from `machines` removes it and its disks.
 
-resource "libvirt_volume" "base" {
-  for_each = toset(distinct([for m in var.machines : m.os]))
-  name     = "${var.name}-${each.key}-base.qcow2"
-  pool     = var.pool
-  source   = var.images[each.key]
-  format   = "qcow2"
+locals {
+  scripts = "${path.module}/../scripts"
+  key     = try(var.platform.ssh.private_key_file, "") == "" ? "" : pathexpand(var.platform.ssh.private_key_file)
+  proxy = {
+    HTTP_PROXY_URL  = try(var.platform.network.http_proxy, "")
+    HTTPS_PROXY_URL = try(var.platform.network.https_proxy, "")
+    NO_PROXY_LIST   = join(",", try(var.platform.network.no_proxy, []))
+  }
+  vm_env = {
+    for n, m in var.machines : n => merge(local.proxy, {
+      NAME       = n
+      VCPU       = tostring(m.vcpu)
+      MEMORY_MB  = tostring(m.memory_mb)
+      DISK_GB    = tostring(m.disk_gb)
+      CPUSET     = m.cpuset
+      IMAGE_URL  = var.images[m.os]
+      POOL_DIR   = var.hypervisors[m.hypervisor].pool_dir
+      NETWORK    = var.hypervisors[m.hypervisor].network
+      DATA_DISKS = join(";", [for d in m.data_disks : d.device != "" ? "dev:${d.device}" : tostring(d.size_gb)])
+      OSINFO     = "linux2022"
+    })
+  }
 }
 
-resource "libvirt_volume" "disk" {
-  for_each       = var.machines
-  name           = "${var.name}-${each.key}.qcow2"
-  pool           = var.pool
-  base_volume_id = libvirt_volume.base[each.value.os].id
-  size           = each.value.disk_gb * 1073741824
-  format         = "qcow2"
+check "hypervisors_of_machines" {
+  assert {
+    condition     = alltrue([for m in var.machines : contains(keys(var.hypervisors), m.hypervisor)])
+    error_message = "machines: each hypervisor must be one of var.hypervisors."
+  }
 }
 
-resource "libvirt_cloudinit_disk" "init" {
+resource "terraform_data" "vm" {
   for_each = var.machines
-  name     = "${var.name}-${each.key}-init.iso"
-  pool     = var.pool
-  user_data = templatefile("${path.module}/user-data.yaml.tftpl", {
-    hostname   = each.key
-    user       = var.admin_user
-    public_key = trimspace(file(pathexpand(var.ssh_public_key_file)))
-  })
-  network_config = templatefile("${path.module}/network-config.yaml.tftpl", {
-    address = each.value.address
-    gateway = var.gateway
-    dns     = var.dns
-  })
-}
+  # what makes the VM again (and so loses its disks): its host, its system; not its size
+  triggers_replace = {
+    hypervisor = each.value.hypervisor
+    os         = each.value.os
+    address    = each.value.address
+  }
+  # what the removal needs (a destroy step reads only this)
+  input = {
+    host    = var.hypervisors[each.value.hypervisor].address
+    user    = var.hypervisors[each.value.hypervisor].user
+    port    = var.hypervisors[each.value.hypervisor].port
+    key     = local.key
+    work    = "/tmp/ngvm-tofu-vm-${each.key}"
+    scripts = local.scripts
+    env     = join("", [for k, v in local.vm_env[each.key] : "${k}='${replace(v, "'", "'\\''")}'\n"])
+  }
 
-resource "libvirt_domain" "m" {
-  for_each  = var.machines
-  name      = "${var.name}-${each.key}"
-  vcpu      = each.value.vcpu
-  memory    = each.value.memory_mb
-  autostart = true
-  cloudinit = libvirt_cloudinit_disk.init[each.key].id
+  connection {
+    type        = "ssh"
+    host        = self.input.host
+    user        = self.input.user
+    port        = self.input.port
+    private_key = self.input.key == "" ? null : file(self.input.key)
+    agent       = self.input.key == ""
+    timeout     = "5m"
+  }
 
-  cpu {
-    mode = "host-passthrough" # Rocky Linux 10 needs x86-64-v3
+  provisioner "remote-exec" {
+    inline = ["rm -rf ${self.input.work} && mkdir -m 700 ${self.input.work}"]
   }
-  network_interface {
-    bridge       = var.bridge == "" ? null : var.bridge
-    network_name = var.bridge == "" ? var.network_name : null
+  provisioner "file" {
+    source      = self.input.scripts
+    destination = self.input.work
   }
-  disk {
-    volume_id = libvirt_volume.disk[each.key].id
+  provisioner "file" {
+    content     = self.input.env
+    destination = "${self.input.work}/vm.env"
   }
-  console {
-    type        = "pty"
-    target_type = "serial"
-    target_port = "0"
+  provisioner "file" {
+    content = templatefile("${path.module}/user-data.yaml.tftpl", {
+      hostname   = each.key
+      user       = var.admin_user
+      public_key = trimspace(file(pathexpand(var.ssh_public_key_file)))
+    })
+    destination = "${self.input.work}/user-data"
+  }
+  provisioner "file" {
+    content = templatefile("${path.module}/network-config.yaml.tftpl", {
+      address = each.value.address
+      gateway = var.gateway
+      dns     = var.dns
+      search  = var.search_domains
+    })
+    destination = "${self.input.work}/network-config"
+  }
+  provisioner "remote-exec" {
+    inline = ["W=${self.input.work}; if [ \"$(id -u)\" -eq 0 ]; then S=; else S='sudo -n'; fi; $S bash $W/scripts/vm-libvirt.sh $W; rc=$?; $S rm -rf $W; exit $rc"]
+  }
+
+  provisioner "remote-exec" {
+    when   = destroy
+    inline = ["rm -rf ${self.input.work} && mkdir -m 700 ${self.input.work}"]
+  }
+  provisioner "file" {
+    when        = destroy
+    source      = self.input.scripts
+    destination = self.input.work
+  }
+  provisioner "file" {
+    when        = destroy
+    content     = self.input.env
+    destination = "${self.input.work}/vm.env"
+  }
+  provisioner "remote-exec" {
+    when   = destroy
+    inline = ["W=${self.input.work}; if [ \"$(id -u)\" -eq 0 ]; then S=; else S='sudo -n'; fi; $S bash $W/scripts/vm-libvirt.sh $W destroy; rc=$?; $S rm -rf $W; exit $rc"]
   }
 }
 
@@ -66,14 +122,16 @@ locals {
       address       = split("/", m.address)[0]
       user          = var.admin_user
       roles         = m.roles
-      physical_host = var.physical_host
+      physical_host = m.hypervisor
+      taints        = m.taints
+      labels        = m.labels
     }
   }
 }
 
 module "platform" {
   source     = "../modules/platform"
-  depends_on = [libvirt_domain.m]
+  depends_on = [terraform_data.vm]
 
   hosts       = local.hosts
   ssh         = try(var.platform.ssh, {})

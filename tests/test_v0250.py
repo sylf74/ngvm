@@ -409,8 +409,8 @@ def test_no_secret_is_a_variable() -> None:
 
 @pytest.mark.skipif(not shutil.which("tofu"), reason="OpenTofu not installed (the CI job tofu runs it)")
 def test_deploy_tofu_checks_and_the_plan_of_the_example(tmp_path) -> None:
-    plan = tmp_path / "plan.json"
-    env = dict(os.environ, PLAN_JSON=str(plan))
+    plan = tmp_path / "plan-existing.json"  # check.sh writes <PLAN_JSON>-<root>.json (v0.25.1)
+    env = dict(os.environ, PLAN_JSON=str(tmp_path / "plan"))
     run = subprocess.run([str(ROOT / "deploy/tofu/check.sh"), "--offline"], env=env, capture_output=True, text=True)
     assert run.returncode == 0, run.stdout + run.stderr
     changes = {r["address"]: r["change"]["after"] for r in json.loads(plan.read_text())["resource_changes"]}
