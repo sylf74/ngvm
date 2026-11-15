@@ -133,7 +133,7 @@ From the first server, once every node is up:
 | MetalLB | `metallb` | v0.25.1: MetalLB in L2 with the pool `addresses`, and RKE2's ingress on `ingress_ip` through a LoadBalancer Service of the platform (`kube-system/ngvm-ingress-lb`, v0.25.7; RKE2's chart is left as it is): the DNS of `*.apps` points to that one address, whichever node answers |
 | cert-manager | `cert_manager` | With its CRDs; a ClusterIssuer `issuer_name` when `issuer` is `ca` (the platform's CA, `issuer_ca_cert_file` and `issuer_ca_key_file`) or `acme` (Let's Encrypt, names reachable from the internet) |
 | CloudNativePG | `cnpg` | The operator of the tenants' databases and of the portal's (`deploy/cnpg/README.md`) |
-| GitLab agent | `gitlab_agent` | The agent `deploy-k8s` goes through: its token (`token_file`, from *Operate > Kubernetes clusters* of the agent's project), GitLab's CA |
+| GitLab agent | `gitlab_agent` | The agent `deploy-k8s` goes through: its token (`token_file`, from *Operate > Kubernetes clusters* of the agent's project), GitLab's CA (`ca_file`, given to the chart as `config.kasCaCert` and checked against `kas_address` before the install, v0.25.9: a CA that does not validate it stops the step) |
 | Portal | `portal` | The chart `ngvm-portal` of this release, with `values_file` (`docs/reporting.md`), the pull secret of `registry` and the secret of its OIDC client |
 
 The tenants' namespaces, their Secrets and the chart `ngvm-tenant` stay with `deploy-k8s`: the
