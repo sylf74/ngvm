@@ -5,6 +5,17 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.5 — 2026-11-15
+
+A fix of the VMs on KVM hosts.
+
+- **A VM whose making failed** (it never answered on its SSH port) is kept for a look at it, then
+  removed with its disks and made again by the next apply. Before, it stayed as it was: OpenTofu
+  does not run the removal of a step that failed, and the next apply went on without the VM.
+
+**Upgrade**: nothing for a tenant. A VM that failed with v0.25.4 or before has no mark: make it
+again once with `tofu apply -replace='terraform_data.vm["<name>"]'`.
+
 ## v0.25.4 — 2026-11-15
 
 A fix of the Rocky VMs on KVM hosts.
