@@ -29,6 +29,7 @@ AUTH=/etc/ngvm/registry-auth.json
 REGISTRY=${IMAGE%%/*}
 
 log "system"
+wait_cloud_init
 proxy_env
 packages_proxy
 trust_cas

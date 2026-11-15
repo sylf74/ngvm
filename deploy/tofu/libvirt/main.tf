@@ -124,7 +124,7 @@ locals {
       roles         = m.roles
       physical_host = m.hypervisor
       taints        = m.taints
-      labels        = m.labels
+      labels        = concat(m.labels, ["topology.rook.io/chassis=${m.hypervisor}"]) # Ceph: one replica per KVM host
     }
   }
 }

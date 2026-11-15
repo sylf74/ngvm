@@ -44,6 +44,7 @@ platform = {
   }
   addons = {
     storage             = "rook-ceph"
+    rook_failure_domain = "chassis"
     issuer              = "ca"
     issuer_name         = "example-ca"
     issuer_ca_cert_file = "~/.ngvm/ca/cluster-ca.pem"

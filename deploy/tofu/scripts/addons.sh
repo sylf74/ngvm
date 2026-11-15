@@ -4,8 +4,14 @@
 # server: Helm, a default StorageClass, cert-manager and its ClusterIssuer, the CloudNativePG
 # operator, the GitLab agent. Called by OpenTofu as `addons.sh <work dir>`, with addons.env:
 #   HELM_VERSION, HELM_URL            Helm on the server (https://get.helm.sh)
-#   STORAGE                           local-path or none
+#   STORAGE                           local-path, rook-ceph or none
 #   LOCAL_PATH_URL                    manifest of the local-path provisioner
+#   ROOK_VERSION, ROOK_CHART_REPO, ROOK_DEVICE_FILTER   Rook-Ceph on the nodes' extra disks
+#   ROOK_FAILURE_DOMAIN               host, or chassis (the label topology.rook.io/chassis: a KVM host)
+#   NODES                             how many nodes (mons and replicas: 3 at most)
+#   TOLERATE                          taint keys of the nodes, tolerated by Rook-Ceph
+#   METALLB, METALLB_ADDRESSES, METALLB_INGRESS_IP, METALLB_CHART_REPO, METALLB_VERSION
+#   INGRESS                           ingress-nginx or traefik (RKE2's): its Service on METALLB_INGRESS_IP
 #   CERT_MANAGER, CERT_MANAGER_CHART, CERT_MANAGER_VERSION
 #   ISSUER                            none, ca or acme: a ClusterIssuer ISSUER_NAME
 #   ISSUER_NAME, ACME_EMAIL, ACME_SERVER, INGRESS_CLASS
@@ -62,6 +68,131 @@ if [ "${STORAGE:-local-path}" = local-path ]; then
   if [ -z "$ROOT" ] && ! kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' | grep -qx true; then
     kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
   fi
+fi
+
+if [ "${STORAGE:-local-path}" = rook-ceph ]; then
+  log "storage: Rook-Ceph $ROOK_VERSION"
+  n=${NODES:-1}
+  [ "$n" -le 3 ] || n=3
+  mgr=1
+  [ "$n" -lt 2 ] || mgr=2
+  tolerations="[]"
+  if [ -n "${TOLERATE:-}" ]; then
+    tolerations="[$(printf '%s' "$TOLERATE" | awk -F, '{for (i = 1; i <= NF; i++) printf "%s{key: \"%s\", operator: Exists}", (i > 1 ? ", " : ""), $i}')]"
+  fi
+  cat > "$WORK/rook-operator.yaml" <<ROOK_OPERATOR
+csi:
+  provisionerTolerations: $tolerations
+  pluginTolerations: $tolerations
+tolerations: $tolerations
+ROOK_OPERATOR
+  cat > "$WORK/rook-cluster.yaml" <<ROOK_CLUSTER
+operatorNamespace: rook-ceph
+toolbox:
+  enabled: true
+cephClusterSpec:
+  mon:
+    count: $n
+    allowMultiplePerNode: false
+  mgr:
+    count: $mgr
+  dashboard:
+    enabled: false
+  storage:
+    useAllNodes: true
+    useAllDevices: false
+    deviceFilter: "$ROOK_DEVICE_FILTER"
+  placement:
+    all:
+      tolerations: $tolerations
+cephBlockPools:
+  - name: ceph-blockpool
+    spec:
+      failureDomain: ${ROOK_FAILURE_DOMAIN:-host}
+      replicated:
+        size: $n
+    storageClass:
+      enabled: true
+      name: ceph-block
+      isDefault: true
+      reclaimPolicy: Delete
+      allowVolumeExpansion: true
+      volumeBindingMode: Immediate
+      parameters:
+        imageFormat: "2"
+        imageFeatures: layering
+        csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+        csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+        csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+        csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+        csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+        csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+        csi.storage.k8s.io/fstype: ext4
+cephFileSystems: []
+cephObjectStores: []
+ROOK_CLUSTER
+  run helm repo add rook-release "$ROOK_CHART_REPO" --force-update > /dev/null
+  run helm upgrade --install rook-ceph rook-release/rook-ceph --version "$ROOK_VERSION" -n rook-ceph --create-namespace \
+    -f "$WORK/rook-operator.yaml" --wait --timeout 15m
+  run helm upgrade --install rook-ceph-cluster rook-release/rook-ceph-cluster --version "$ROOK_VERSION" -n rook-ceph \
+    -f "$WORK/rook-cluster.yaml" --timeout 15m
+  if [ -z "$ROOT" ]; then
+    log "waiting for the Ceph cluster (30 minutes at most)"
+    kubectl -n rook-ceph wait cephcluster/rook-ceph --for=jsonpath='{.status.phase}'=Ready --timeout 30m
+    kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.ceph.health}{"\n"}'
+  fi
+fi
+
+if [ "${METALLB:-false}" = true ]; then
+  log "MetalLB, the ingress on $METALLB_INGRESS_IP"
+  run helm repo add metallb "$METALLB_CHART_REPO" --force-update > /dev/null
+  mversion=()
+  [ -z "${METALLB_VERSION:-}" ] || mversion=(--version "$METALLB_VERSION")
+  run helm upgrade --install metallb metallb/metallb -n metallb-system --create-namespace "${mversion[@]}" --wait --timeout 10m
+  addresses=$(printf '%s' "$METALLB_ADDRESSES" | awk -F, '{for (i = 1; i <= NF; i++) printf "    - %s\n", $i}')
+  pool="apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: ngvm
+  namespace: metallb-system
+spec:
+  addresses:
+$addresses
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: ngvm
+  namespace: metallb-system
+spec:
+  ipAddressPools: [ngvm]"
+  applied=false
+  for _ in $(seq 12); do
+    if printf '%s\n' "$pool" | apply_stdin > /dev/null; then applied=true; break; fi
+    sleep 10
+  done
+  [ "$applied" = true ] || fail "MetalLB: the address pool was refused (its webhook not ready?)"
+  if [ "${INGRESS:-ingress-nginx}" = traefik ]; then
+    chart=rke2-traefik
+    values="    service:
+      enabled: true
+      type: LoadBalancer
+      annotations:
+        metallb.io/loadBalancerIPs: $METALLB_INGRESS_IP
+      spec:
+        externalTrafficPolicy: Local"
+  else
+    chart=rke2-ingress-nginx
+    values="    controller:
+      service:
+        enabled: true
+        type: LoadBalancer
+        annotations:
+          metallb.io/loadBalancerIPs: $METALLB_INGRESS_IP
+        externalTrafficPolicy: Local"
+  fi
+  printf 'apiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: %s\n  namespace: kube-system\nspec:\n  valuesContent: |-\n%s\n' \
+    "$chart" "$values" | apply_stdin > /dev/null
 fi
 
 if [ "${CERT_MANAGER:-true}" = true ]; then

@@ -60,6 +60,12 @@ os_family() {
   esac
 }
 
+# wait_cloud_init: a VM just made finishes its cloud-init (users, network) before the step.
+wait_cloud_init() {
+  [ -z "$ROOT" ] || return 0
+  if command -v cloud-init > /dev/null 2>&1; then cloud-init status --wait > /dev/null 2>&1 || true; fi
+}
+
 # proxy_env: the proxy of the platform for the commands of this script (empty: none).
 proxy_env() {
   if [ -n "${HTTP_PROXY_URL:-}" ]; then

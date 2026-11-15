@@ -24,6 +24,7 @@ load_env "$WORK/keycloak.env"
 K=/etc/ngvm/keycloak
 
 log "system"
+wait_cloud_init
 proxy_env
 packages_proxy
 trust_cas

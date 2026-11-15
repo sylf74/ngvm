@@ -2,7 +2,7 @@
 # The variables of modules/platform, passed through (docs/platform.md §3).
 
 variable "hosts" {
-  description = "The machines, by name. address: where OpenTofu reaches them by SSH. internal_address: the address of the cluster's traffic, when it is another one (a cloud's private network). roles: server (RKE2 server), agent (RKE2 agent), collector, keycloak. physical_host: the machine that runs a VM, so that two servers never share it."
+  description = "The machines, by name. address: where OpenTofu reaches them by SSH. internal_address: the address of the cluster's traffic, when it is another one (a cloud's private network). roles: server (RKE2 server), agent (RKE2 agent), collector, keycloak. physical_host: the machine that runs a VM, so that two servers never share it. taints (key=value:Effect), labels (key=value): of the Kubernetes node."
   type = map(object({
     address          = string
     internal_address = optional(string, "")
@@ -10,6 +10,8 @@ variable "hosts" {
     port             = optional(number, 22)
     roles            = list(string)
     physical_host    = optional(string, "")
+    taints           = optional(list(string), [])
+    labels           = optional(list(string), [])
   }))
   validation {
     condition     = alltrue([for n, h in var.hosts : can(regex("^[a-z0-9][a-z0-9-]{0,62}$", n))])
@@ -18,6 +20,13 @@ variable "hosts" {
   validation {
     condition     = alltrue(flatten([for h in var.hosts : [for r in h.roles : contains(["server", "agent", "collector", "keycloak"], r)]]))
     error_message = "hosts: roles are server, agent, collector or keycloak."
+  }
+  validation {
+    condition = alltrue(flatten([for h in var.hosts : concat(
+      [for x in h.taints : can(regex("^[A-Za-z0-9./-]+(=[A-Za-z0-9._-]*)?:(NoSchedule|PreferNoSchedule|NoExecute)$", x))],
+      [for x in h.labels : can(regex("^[A-Za-z0-9./-]+=[A-Za-z0-9._-]*$", x))],
+    )]))
+    error_message = "hosts: taints as key=value:NoSchedule (or PreferNoSchedule, NoExecute), labels as key=value."
   }
   validation {
     condition     = contains([0, 1, 3], length([for h in var.hosts : h if contains(h.roles, "server")]))
@@ -81,11 +90,15 @@ variable "cluster" {
 }
 
 variable "addons" {
-  description = "What the platform installs in the cluster. issuer: none, ca (issuer_ca_cert_file, issuer_ca_key_file) or acme (acme_email). gitlab_agent: the agent that deploys the tenants (deploy-k8s)."
+  description = "What the platform installs in the cluster. storage: local-path, rook-ceph (the nodes' extra disks matching rook_device_filter) or none. issuer: none, ca (issuer_ca_cert_file, issuer_ca_key_file) or acme (acme_email). metallb: a pool of addresses and the ingress's address in it. gitlab_agent: the agent that deploys the tenants (deploy-k8s)."
   type = object({
     helm_version         = optional(string, "v3.19.0")
     helm_url             = optional(string, "https://get.helm.sh")
     storage              = optional(string, "local-path")
+    rook_version         = optional(string, "v1.21.0")
+    rook_chart_repo      = optional(string, "https://charts.rook.io/release")
+    rook_device_filter   = optional(string, "^vd[b-z]$")
+    rook_failure_domain  = optional(string, "host")
     local_path_url       = optional(string, "https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.32/deploy/local-path-storage.yaml")
     cert_manager         = optional(bool, true)
     cert_manager_chart   = optional(string, "oci://quay.io/jetstack/charts/cert-manager")
@@ -98,6 +111,12 @@ variable "addons" {
     acme_server          = optional(string, "https://acme-v02.api.letsencrypt.org/directory")
     cnpg                 = optional(bool, true)
     cnpg_url             = optional(string, "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.29/releases/cnpg-1.29.3.yaml")
+    metallb = optional(object({
+      addresses  = list(string)
+      ingress_ip = string
+      chart_repo = optional(string, "https://metallb.github.io/metallb")
+      version    = optional(string, "")
+    }))
     gitlab_agent = optional(object({
       name        = string
       kas_address = string
@@ -109,8 +128,8 @@ variable "addons" {
   })
   default = {}
   validation {
-    condition     = contains(["none", "ca", "acme"], var.addons.issuer) && contains(["local-path", "none"], var.addons.storage)
-    error_message = "addons.issuer: none, ca or acme; addons.storage: local-path or none."
+    condition     = contains(["none", "ca", "acme"], var.addons.issuer) && contains(["local-path", "rook-ceph", "none"], var.addons.storage)
+    error_message = "addons.issuer: none, ca or acme; addons.storage: local-path, rook-ceph or none."
   }
 }
 

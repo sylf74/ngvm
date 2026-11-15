@@ -22,6 +22,9 @@ locals {
       SERVICE_CIDR     = var.cluster.service_cidr
       DISABLE_FIREWALL = tostring(var.cluster.disable_firewall)
       MIRRORS          = local.mirrors
+      TAINTS           = join(";", var.hosts[n].taints)
+      LABELS           = join(";", var.hosts[n].labels)
+      STORAGE          = var.addons.storage
     })
   }
   rke2_nodes = keys(local.rke2_env)

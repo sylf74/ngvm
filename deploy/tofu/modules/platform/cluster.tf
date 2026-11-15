@@ -26,6 +26,18 @@ locals {
     ACME_EMAIL           = var.addons.acme_email
     ACME_SERVER          = var.addons.acme_server
     INGRESS_CLASS        = try(var.cluster.ingress, "ingress-nginx") == "traefik" ? "traefik" : "nginx"
+    ROOK_VERSION         = var.addons.rook_version
+    ROOK_CHART_REPO      = var.addons.rook_chart_repo
+    ROOK_DEVICE_FILTER   = var.addons.rook_device_filter
+    ROOK_FAILURE_DOMAIN  = var.addons.rook_failure_domain
+    NODES                = tostring(length(local.rke2_nodes))
+    TOLERATE             = join(",", distinct(flatten([for n in local.rke2_nodes : [for x in var.hosts[n].taints : split("=", split(":", x)[0])[0]]])))
+    METALLB              = tostring(var.addons.metallb != null)
+    METALLB_ADDRESSES    = join(",", try(var.addons.metallb.addresses, []))
+    METALLB_INGRESS_IP   = try(var.addons.metallb.ingress_ip, "")
+    METALLB_CHART_REPO   = try(var.addons.metallb.chart_repo, "")
+    METALLB_VERSION      = try(var.addons.metallb.version, "")
+    INGRESS              = try(var.cluster.ingress, "ingress-nginx")
     CNPG                 = tostring(var.addons.cnpg)
     CNPG_URL             = var.addons.cnpg_url
     AGENT                = tostring(var.addons.gitlab_agent != null)
