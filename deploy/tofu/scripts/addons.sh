@@ -141,17 +141,28 @@ ROOK_CLUSTER
     -f "$WORK/rook-cluster.yaml" --timeout 15m
   if [ -z "$ROOT" ]; then
     log "waiting for the Ceph cluster (30 minutes at most)"
-    phase="" health="" failing=""
+    # Ready with every pod started, for a minute: HEALTH_OK is not waited for. Ceph 20 stays in
+    # HEALTH_WARN on kernels older than Linux 7.0 (the CSI keys keep the aes type), and a warning is
+    # the operator's to read: the step says it and goes on.
+    phase="" health="" failing="" steady=0
     for _ in $(seq 180); do
       phase=$(kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.phase}' 2> /dev/null || true)
       health=$(kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.ceph.health}' 2> /dev/null || true)
       failing=$(kubectl -n rook-ceph get pods --no-headers 2> /dev/null | awk '$3 ~ /CrashLoopBackOff|Error/ {print $1}' | tr '\n' ' ')
-      if [ "$phase" = Ready ] && [ "$health" = HEALTH_OK ] && [ -z "$failing" ]; then break; fi
+      if [ "$phase" = Ready ] && [ "$health" != HEALTH_ERR ] && [ -n "$health" ] && [ -z "$failing" ]; then
+        steady=$((steady + 1))
+        [ "$steady" -lt 6 ] || break
+      else
+        steady=0
+      fi
       sleep 10
     done
     [ -z "$failing" ] || fail "Ceph: pods that do not start: $failing(kubectl -n rook-ceph logs <pod> --all-containers)"
     [ "$phase" = Ready ] || fail "Ceph: the cluster is $phase after 30 minutes (kubectl -n rook-ceph get cephcluster)"
-    [ "$health" = HEALTH_OK ] || log "WARN Ceph is $health (kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.ceph.details}')"
+    [ "$health" != HEALTH_ERR ] || fail "Ceph is in HEALTH_ERR: kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail"
+    if [ "$health" != HEALTH_OK ]; then
+      log "WARN Ceph is $health: $(kubectl -n rook-ceph get cephcluster rook-ceph -o jsonpath='{range .status.ceph.details.*}{.message}; {end}' 2> /dev/null || true)(docs/platform.md, Rook-Ceph)"
+    fi
     log "Ceph cluster $phase, $health"
   fi
 fi

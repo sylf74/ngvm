@@ -148,6 +148,12 @@ later push to the default branch redeploys (new profile, new targets, new versio
 
 The Secrets (`ngvm-tenant`, `ngvm-intake`, `ngvm-verdict`, `ngvm-chat`, `ngvm-via`,
 `ngvm-dispatch`, `ngvm-intel`, `ngvm-registry`) and the alerts' template are created, then replaced
+No step of the pipeline runs `kubectl apply` (v0.25.8). A client-side apply reads the cluster's
+OpenAPI schema, and the GitLab agent server refuses to serve it (it accepts JSON, YAML and the
+Kubernetes protobuf only; the job then stops on `failed to download openapi`). The namespace is
+created when it is missing, the manifests of a run are created, and the rest goes through Helm.
+
+Secrets and generated ConfigMaps are created or replaced
 at each deployment, never `kubectl apply`d (v0.23.16): a client-side apply copies the whole object
 into the annotation `kubectl.kubernetes.io/last-applied-configuration`, limited to 256 KiB, and
 `ngvm-tenant` with the proxy's CA bundle and the certificates of an LLM behind mutual TLS went over

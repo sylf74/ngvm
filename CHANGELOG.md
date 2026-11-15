@@ -5,6 +5,23 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.8 — 2026-11-15
+
+Two fixes found while deploying the tenants on a cluster made by OpenTofu.
+
+- **Deployment of a tenant**: no step runs `kubectl apply` any more. A client-side apply reads the
+  cluster's OpenAPI schema, which the GitLab agent server refuses to serve (JSON, YAML and the
+  Kubernetes protobuf only): `deploy-k8s` stopped on the namespace with `failed to download
+  openapi`, and `send-alerts-k8s` would have stopped the same way. The namespace is created when
+  it is missing, a send job's manifest is created, and the rest goes through Helm.
+- **Ceph that warns**: the addons step waits for a cluster that is Ready and steady for a minute,
+  says the warning with its reasons, and stops only on `HEALTH_ERR`. Ceph 20 stays in
+  `HEALTH_WARN` on a kernel older than Linux 7.0 (the CSI keys keep the `aes` type), so the step
+  waited 30 minutes for nothing. `ceph health mute AUTH_INSECURE_CLIENT_KEY_TYPE --sticky` is the
+  operator's call, not the platform's.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.25.8`.
+
 ## v0.25.7 — 2026-11-15
 
 Fixes of the addons of the cluster, found on the first cluster made from end to end.
