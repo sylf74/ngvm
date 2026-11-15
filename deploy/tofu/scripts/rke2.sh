@@ -14,6 +14,8 @@
 #   CLUSTER_CIDR, SERVICE_CIDR
 #   DISABLE_FIREWALL  true: firewalld or ufw stopped, as RKE2 asks
 #   MIRRORS           registry=endpoint[,endpoint];... (registries.yaml)
+#   TAINTS, LABELS    of the node, ';'-separated (key=value:Effect, key=value)
+#   STORAGE           rook-ceph: lvm2 on the node, for the OSDs
 #   HTTP_PROXY_URL, HTTPS_PROXY_URL, NO_PROXY_LIST
 # and in stage/: token (the cluster's secret), ca-<n>.pem, registry-<registry>.pem.
 
@@ -31,10 +33,12 @@ CONF=/etc/rancher/rke2
 RESTART=1
 
 log "system ($FAMILY)"
+wait_cloud_init
 proxy_env
 packages_proxy
 trust_cas
 if [ "$FAMILY" = debian ]; then install_packages curl tar ca-certificates; else install_packages curl tar; fi
+[ "${STORAGE:-}" != rook-ceph ] || install_packages lvm2
 
 if [ "${DISABLE_FIREWALL:-true}" = true ]; then
   for fw in firewalld ufw; do
@@ -64,6 +68,13 @@ staged token "$CONF/ngvm-token" 0600 && RESTART=0
   echo "node-ip: $NODE_IP"
   [ "$FAMILY" = rhel ] && echo "selinux: true"
   [ "${CIS:-false}" = true ] && echo "profile: cis"
+  for kind in taint label; do
+    if [ "$kind" = taint ]; then list=${TAINTS:-}; else list=${LABELS:-}; fi
+    [ -n "$list" ] || continue
+    echo "node-$kind:"
+    IFS=';' read -ra items <<< "$list"
+    for x in "${items[@]}"; do [ -z "$x" ] || echo "  - \"$x\""; done
+  done
   if [ "$ROLE" = server ]; then
     echo "write-kubeconfig-mode: \"0600\""
     echo "cni: canal"

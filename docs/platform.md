@@ -1,4 +1,4 @@
-# The platform with OpenTofu (v0.25.0, HLD D22)
+# The platform with OpenTofu (v0.25.0 and v0.25.1, HLD D22)
 
 From Linux machines reached by SSH, one `tofu apply` deploys what the platform needs outside the
 tenant projects: the Kubernetes cluster and what it runs for every tenant, the collectors near the
@@ -18,7 +18,7 @@ GitLab ── tenant project ── deploy-k8s ── GitLab agent ──▶ nam
 | `existing` | Machines that exist: an inventory of addresses (§3) |
 | `scaleway` | Instances created on Scaleway, then the platform on them (§8) |
 | `azure` | VMs created on Azure, then the platform on them (§8) |
-| `libvirt` | VMs created on a bare KVM host (Rocky Linux 10, libvirt), then the platform on them (§8) |
+| `libvirt` | VMs created on KVM hosts with libvirt (several, Open vSwitch or Linux bridges), then the platform on them (§8) |
 
 Every root calls `modules/platform`: the same steps on the same kinds of machines, however they
 were made.
@@ -129,7 +129,8 @@ From the first server, once every node is up:
 | Addon | Setting | What |
 | --- | --- | --- |
 | Helm | `helm_version` | On the first server, its checksum verified |
-| StorageClass | `storage` | `local-path` (the provisioner of Rancher, default class): volumes on the node's disk, lost with the node. `none`: bring your own (Longhorn, a SAN driver) |
+| StorageClass | `storage` | `local-path` (the provisioner of Rancher, default class): volumes on the node's disk, lost with the node. `rook-ceph` (v0.25.1): Rook and a Ceph cluster on the nodes' extra disks (`rook_device_filter`, `^vd[b-z]$`: the VMs' second and later disks), up to 3 mons and 3 replicas, StorageClass `ceph-block` by default; the nodes' taints are tolerated. The replicas go to different nodes, or with `rook_failure_domain = "chassis"` to different values of the node label `topology.rook.io/chassis`, which the `libvirt` root sets to each VM's hypervisor: two VMs on one KVM host never hold two replicas. `none`: bring your own |
+| MetalLB | `metallb` | v0.25.1: MetalLB in L2 with the pool `addresses`, and RKE2's ingress as a LoadBalancer on `ingress_ip`: the DNS of `*.apps` points to that one address, whichever node answers |
 | cert-manager | `cert_manager` | With its CRDs; a ClusterIssuer `issuer_name` when `issuer` is `ca` (the platform's CA, `issuer_ca_cert_file` and `issuer_ca_key_file`) or `acme` (Let's Encrypt, names reachable from the internet) |
 | CloudNativePG | `cnpg` | The operator of the tenants' databases and of the portal's (`deploy/cnpg/README.md`) |
 | GitLab agent | `gitlab_agent` | The agent `deploy-k8s` goes through: its token (`token_file`, from *Operate > Kubernetes clusters* of the agent's project), GitLab's CA |
@@ -197,7 +198,25 @@ The three roots create the machines, then run the platform on them in the same a
 | --- | --- | --- |
 | `scaleway` | `SCW_ACCESS_KEY`, `SCW_SECRET_KEY` | A private network for the cluster; SSH, the API, 80 and 443 open to `admin_cidrs`, 80 and 443 to `public_cidrs` |
 | `azure` | `az login`, or `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_TENANT_ID` | A virtual network and its subnet; the same rules in its NSG. Rocky Linux: accept the marketplace terms once (`az vm image terms accept --publisher resf --offer rockylinux-x86_64 --plan 9-base`) |
-| `libvirt` | The KVM host by SSH (`libvirt_uri`) | Static addresses by cloud-init, on a bridge (`bridge`) or a libvirt network (through the KVM host as `ssh.bastion`). Every VM on one physical host: one server |
+| `libvirt` | The KVM hosts by SSH (`hypervisors`), root or passwordless sudo | Static addresses by cloud-init on the host's `network`: `ovs:<bridge>` (Open vSwitch), `bridge:<bridge>` or `network:<libvirt network>`. Each VM's hypervisor is its `physical_host` |
+
+**On KVM hosts** (`libvirt`, v0.25.1): OpenTofu reaches each host by SSH and runs
+`scripts/vm-libvirt.sh`, which makes the VM with `virt-install` (`virt-install` and `qemu-img`
+installed when missing): the cloud image of its `os` downloaded once into `<pool_dir>/ngvm-images`,
+its disk copied from it and grown to `disk_gb`, its `data_disks` (a size in GB: a qcow2 next to it;
+a `device`: a block device of the host given whole, e.g. a disk of a former Ceph), its vCPUs on
+`cpuset` (the P-cores of a hybrid CPU), cloud-init for the administrator, the static address and
+the DNS. The domain is marked `ngvm:<name>` in its description:
+
+- a VM that exists is left as it is: a change of `vcpu`, `memory_mb` or `disk_gb` is not applied
+  (do it with `virsh`); a change of `hypervisor`, `os` or `address` makes the VM again, its disks
+  lost;
+- a VM removed from `machines` (or `tofu destroy`) is stopped, undefined, and the disks the script
+  made are removed; a block device is never touched;
+- a domain of the same name that NGVM did not make stops the step: remove it first.
+
+Rocky Linux 10 needs x86-64-v3 (AVX2): on an older CPU, `os = "ubuntu"`. A node's `taints` and
+`labels` go to RKE2 (`node-taint`, `node-label`).
 
 Read the credentials from where they are stored, never from a file of the repository:
 

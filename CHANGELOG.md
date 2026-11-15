@@ -5,6 +5,29 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.25.1 — 2026-11-15
+
+The cluster rebuilt by OpenTofu on VMs of several KVM hosts, with Rook-Ceph and MetalLB.
+
+- **VMs on KVM hosts over SSH** (`deploy/tofu/libvirt`, no libvirt provider any more): several
+  hosts in one apply, Open vSwitch (`ovs:<bridge>`), Linux bridges or libvirt networks, a pool
+  folder per host; virt-install from a cloud image with cloud-init (administrator, static address,
+  DNS, search domains); extra disks for Rook-Ceph (a qcow2, or a block device of the host); vCPUs
+  pinned to host CPUs. Each VM's hypervisor is its `physical_host`, so two servers never share a
+  KVM host. A VM is made once; removed from `machines`, it is removed with the disks NGVM made; a
+  domain NGVM did not make is never touched.
+- **Rook-Ceph** (`addons.storage = "rook-ceph"`): the operator and a Ceph cluster on the nodes'
+  extra disks, up to 3 mons and 3 replicas, StorageClass `ceph-block` by default, the nodes' taints
+  tolerated; with `rook_failure_domain = "chassis"` one replica per KVM host.
+- **MetalLB** (`addons.metallb`): an L2 address pool and RKE2's ingress as a LoadBalancer on one
+  address (`ingress_ip`), for a wildcard DNS such as `*.apps`.
+- **Nodes**: `taints` and `labels` per host (RKE2 `node-taint`, `node-label`); every step waits for
+  the cloud-init of a new VM.
+
+**Upgrade**: nothing for a tenant. `deploy/tofu/libvirt` takes `hypervisors` and
+`machines[*].hypervisor` in place of `libvirt_uri` and `bridge`; a state made with v0.25.0's
+libvirt root is not carried over (its VMs were the provider's).
+
 ## v0.25.0 — 2026-11-14
 
 The platform deployed with OpenTofu (HLD D22), and the product renamed **NGVM** (Next-Generation
