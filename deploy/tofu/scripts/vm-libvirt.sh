@@ -15,7 +15,9 @@
 #   OSINFO        virt-install --osinfo (linux2022 by default; generic when unknown)
 #   HTTP_PROXY_URL, HTTPS_PROXY_URL, NO_PROXY_LIST
 # and user-data, network-config (cloud-init) in the work dir. A VM that exists is left as it is;
-# a domain of that name not made by NGVM stops the step.
+# a domain of that name not made by NGVM stops the step. A VM whose making failed (it never
+# answered on its SSH port: the file <POOL_DIR>/<NAME>.creating is still there) is removed and
+# made again: OpenTofu does not run the removal of a step that failed.
 #   vm-libvirt.sh <work dir> destroy: the VM and the disks this script made, removed.
 
 set -euo pipefail
@@ -36,7 +38,10 @@ virsh_() {
 exists() { virsh_ dominfo "$NAME" > /dev/null 2>&1; }
 ours() { virsh_ desc "$NAME" 2>/dev/null | grep -qx "$MARK"; }
 
-if [ "$ACTION" = destroy ]; then
+CREATING=$POOL_DIR/$NAME.creating
+
+# remove_vm: the domain, when NGVM made it, and the disks this script made.
+remove_vm() {
   if exists; then
     ours || fail "domain $NAME was not made by NGVM: left as it is"
     log "VM $NAME removed"
@@ -44,9 +49,18 @@ if [ "$ACTION" = destroy ]; then
     virsh_ undefine "$NAME" --nvram > /dev/null 2>&1 || virsh_ undefine "$NAME" > /dev/null
   fi
   run rm -f "$POOL_DIR/$NAME.qcow2" "$POOL_DIR/$NAME"-data*.qcow2
+}
+
+if [ "$ACTION" = destroy ]; then
+  remove_vm
+  rm -f "$ROOT$CREATING"
   exit 0
 fi
 
+if [ -e "$ROOT$CREATING" ]; then
+  log "VM $NAME: its making failed last time, it is made again"
+  remove_vm
+fi
 if exists; then
   ours || fail "a domain $NAME exists and was not made by NGVM: remove it first (virsh undefine $NAME)"
   log "VM $NAME exists: left as it is"
@@ -71,6 +85,7 @@ if [ ! -s "$ROOT$base" ]; then
 fi
 
 log "disks of $NAME in $POOL_DIR"
+: > "$ROOT$CREATING"
 disk=$POOL_DIR/$NAME.qcow2
 [ ! -e "$ROOT$disk" ] || fail "$disk exists: remove it, or the VM it belonged to"
 run qemu-img convert -O qcow2 "$base" "$disk"
@@ -122,9 +137,11 @@ if [ -z "$ROOT" ] && [ -n "${ADDRESS:-}" ]; then
   for _ in $(seq 120); do
     if timeout 2 bash -c "exec 3<>/dev/tcp/$ADDRESS/22" 2> /dev/null; then
       log "VM $NAME answers on $ADDRESS:22"
+      rm -f "$CREATING"
       exit 0
     fi
     sleep 5
   done
-  fail "VM $NAME not reachable on $ADDRESS:22 after 10 minutes (cloud-init, network-config): virsh console $NAME"
+  fail "VM $NAME not reachable on $ADDRESS:22 after 10 minutes (cloud-init, network-config): virsh console $NAME; the next apply makes it again"
 fi
+rm -f "$ROOT$CREATING"

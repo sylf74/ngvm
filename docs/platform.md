@@ -212,7 +212,8 @@ names, netplan (Ubuntu) takes either (v0.25.3). The default route is written `0.
 for an IPv6 gateway): the cloud-init of Rocky 10 fails on `to: default` and then applies nothing,
 not even the administrator (v0.25.4). The step then waits up to 10 minutes for the VM's
 SSH port and stops on a VM that does not answer; a VM made again runs every step of the platform
-again. The domain is marked `ngvm:<name>` in its description:
+again. A VM whose making failed is kept for a look at it (`virsh console`), and the next apply
+removes it and makes it again (v0.25.5). The domain is marked `ngvm:<name>` in its description:
 
 - a VM that exists is left as it is: a change of `vcpu`, `memory_mb` or `disk_gb` is not applied
   (do it with `virsh`); a change of `hypervisor`, `os` or `address` makes the VM again, its disks
