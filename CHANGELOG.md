@@ -5,6 +5,17 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.1 — 2026-11-16
+
+A fix of v0.27.0, seen on the first real page.
+
+- **The graph was black on black**: the boxes of the drawing took their colours from a stylesheet
+  rule that was never written, and an SVG rectangle with no fill is black. The drawing now carries
+  its own colours as attributes, so a missing rule cannot hide it again, and a test checks that
+  every box and every label says its own fill.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.1`.
+
 ## v0.27.0 — 2026-11-16
 
 Where to act first, from the paths the run already kept.
