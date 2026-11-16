@@ -198,6 +198,19 @@ def test_the_graph_is_drawn_on_the_page() -> None:
     assert "<a href='/exposure?level=ATTEND'>ATTEND</a>" in page
 
 
+def test_the_drawing_carries_its_own_colours(tmp_path) -> None:
+    """A stylesheet rule that goes missing must not turn the drawing into black on black (v0.27.1)."""
+    page = exposure.page({"tenant": TENANT, "assets": [], "total": 0, "graph": GRAPH})
+    drawing = page.split("<svg")[1].split("</svg>")[0]
+    rects = re.findall(r"<rect [^>]*>", drawing)
+    assert rects and all("fill='#" in r and "stroke='#" in r for r in rects)
+    texts = re.findall(r"<text [^>]*>", drawing)
+    assert texts and all("fill='#" in t and "font-size=" in t for t in texts)
+    assert "fill='none'" in drawing and "stroke='#9aa5b1'" in drawing  # the links between the boxes
+    kinds = {n["kind"] for n in GRAPH["nodes"]}
+    assert {exposure.COLOURS[k][0] for k in kinds} <= {m.group(1) for m in re.finditer(r"fill='(#\w+)'", drawing)}
+
+
 def test_a_run_whose_paths_lead_nowhere() -> None:
     empty = {**GRAPH, "chokepoints": [], "nodes": [], "edges": [], "chokepoints_total": 0}
     page = exposure.page({"tenant": TENANT, "assets": [], "total": 0, "graph": empty})

@@ -59,6 +59,9 @@ a{color:#0b4a8a}
 .hop .num{font-size:12px;color:#555}
 .link{align-self:center;padding:0 6px;color:#555;font-size:13px;text-align:center;min-width:64px}
 .link b{display:block;font-size:12px;color:#1a1a1a;font-weight:600}
+.drawing{background:#fff;border:1px solid #e3e3e0;padding:8px 12px;overflow-x:auto}
+svg.graph{display:block;min-width:940px}
+svg.graph a:hover rect{stroke-width:2}
 .open{background:#fde2e1;color:#8a1c14}.controlled{background:#fdf3d7;color:#7a5600}
 .small{background:#e2f5e6;color:#1d5b2c}.assumed{background:#e3e3e0;color:#444}
 """

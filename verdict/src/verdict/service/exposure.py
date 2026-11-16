@@ -43,6 +43,19 @@ WHY = {
 
 
 COLUMN_TITLES = ("The way in", "Zones", "What answers", "Assets")
+# The drawing carries its own colours, as attributes: an SVG whose look depends on a stylesheet is
+# black on black the day a rule is missing (v0.27.1). Fill, then stroke, by kind of node.
+COLOURS = {
+    "internet": ("#fde2e1", "#8a1c14"),
+    "zone": ("#fdf3d7", "#8a5a0b"),
+    "service": ("#e1effd", "#0b4a8a"),
+    "endpoint": ("#f3e1fd", "#5b1d4a"),
+    "declared": ("#f3e1fd", "#5b1d4a"),
+    "host": ("#e2f5e6", "#1d5b2c"),
+    "image": ("#e2f5e6", "#1d5b2c"),
+}
+PLAIN = ("#f7f7f5", "#9aa5b1")
+INK, FADED = "#1a1a1a", "#555555"
 BOX_W, BOX_H, GAP_Y, COL_W, PER_COLUMN = 196, 44, 56, 244, 8
 MARGIN_TOP = 34
 
@@ -106,22 +119,24 @@ def _svg(graph: dict[str, Any]) -> str:
         kind = str(node.get("kind", ""))
         label = str(node.get("label") or node.get("node", ""))
         counts = f"{node.get('findings', 0)} findings · {node.get('assets', 0)} asset(s)"
+        fill, stroke = COLOURS.get(kind, PLAIN)
         box = (
             f"<g><title>{esc(label)} — {esc(counts)}</title>"
-            f"<rect x='{x}' y='{y}' width='{BOX_W}' height='{BOX_H}' rx='2' class='n-{esc(kind)}'/>"
-            f"<text x='{x + 8}' y='{y + 18}' class='t'>{esc(_short(label))}</text>"
-            f"<text x='{x + 8}' y='{y + 34}' class='s'>{esc(counts)}</text></g>"
+            f"<rect x='{x}' y='{y}' width='{BOX_W}' height='{BOX_H}' rx='2' fill='{fill}' stroke='{stroke}' "
+            f"stroke-width='1' class='n-{esc(kind)}'/>"
+            f"<text x='{x + 8}' y='{y + 18}' font-size='13' fill='{INK}'>{esc(_short(label))}</text>"
+            f"<text x='{x + 8}' y='{y + 34}' font-size='11' fill='{FADED}'>{esc(counts)}</text></g>"
         )
         if kind in ("host", "image"):
             box = f"<a href='/exposure?asset={quote(str(node.get('node')), safe='')}'>{box}</a>"
         boxes.append(box)
     titles = "".join(
-        f"<text x='{i * COL_W}' y='16' class='h'>{esc(title)}</text>"
+        f"<text x='{i * COL_W}' y='16' font-size='11' fill='{FADED}'>{esc(title)}</text>"
         for i, title in enumerate(COLUMN_TITLES)
         if columns[i]
     )
     more = "".join(
-        f"<text x='{i * COL_W}' y='{height - 14}' class='s'>+{len(column) - PER_COLUMN} more</text>"
+        f"<text x='{i * COL_W}' y='{height - 14}' font-size='11' fill='{FADED}'>+{len(column) - PER_COLUMN} more</text>"
         for i, column in enumerate(columns)
         if len(column) > PER_COLUMN
     )
