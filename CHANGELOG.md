@@ -5,6 +5,32 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.2 — 2026-11-16
+
+Reading the graph of a client nobody can draw whole.
+
+- **Navigation by vertex** on the exposure page: every box of every drawing is a link to the
+  neighbourhood of that node — what is within two hops of it either way, drawn, and the assets whose
+  path goes through it, named and counted at the level being read. The label of each chokepoint in
+  the ranking is the same link, so the reading starts from the heaviest node rather than from
+  looking for a box. `?depth=1` or `?depth=3` for a tighter or a wider view.
+- **Why**: at a few hundred assets the whole graph is cut down to its heaviest sixty nodes, and an
+  unreadable drawing does not become readable by zooming into it. A neighbourhood of one node is
+  drawn whole and says how much of the graph it left out.
+- **No script**: the pivot is a link and the page is rendered by the server, so the
+  Content-Security-Policy of the review page (no script, no image, no request to another host) is
+  unchanged.
+- **A link that no longer resolves is explained**: a node is named by the run that saw it, so a link
+  kept from an earlier run can name a node this one does not observe. The page says so instead of
+  drawing an empty graph (`focus_unknown`).
+- **The route**: `GET /v1/tenants/<t>/exposure-graph?node=<id>&depth=<1..3>` (read token) answers
+  the node as `focus`, its neighbourhood as `nodes`/`edges` with the hops as `distance`, and the
+  assets behind it as `behind`.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.2`. The
+page needs a decision service of this version to pivot; an older one answers the whole graph as
+before, and the page says what it could not read.
+
 ## v0.27.1 — 2026-11-16
 
 A fix of v0.27.0, seen on the first real page.

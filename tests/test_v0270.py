@@ -193,7 +193,8 @@ def test_the_graph_is_drawn_on_the_page() -> None:
     assert "<title>flow · 12 findings on 2 asset(s) · flows/0</title>" in page  # the link says what it carries
     assert "<a href='/exposure?asset=host%3Aweb01'>" in page  # an asset leads to its own path
     assert "The way in" in page and "Assets" in page
-    assert "Chokepoint" in page and ">dmz</td>" in page and "web01, web02" in page
+    # v0.27.2: the label of a chokepoint is the way into its neighbourhood, so it is a link now
+    assert "Chokepoint" in page and ">dmz</a></td>" in page and "web01, web02" in page
     assert "Assets with no path (assumed)" in page and "class='warn'>1</span>" in page
     assert "<a href='/exposure?level=ATTEND'>ATTEND</a>" in page
 

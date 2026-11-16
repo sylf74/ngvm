@@ -1275,10 +1275,28 @@ class Tools:
         return fit(copy.deepcopy(self._progress_data()), self.max_chars)
 
     # -- why an asset is exposed as it is (v0.26.3) ---------------------------------------------
-    def _exposure_data(self, asset: str = "", exposure: str = "", level: str = "", limit: int = 200) -> dict[str, Any]:
+    def _exposure_data(
+        self,
+        asset: str = "",
+        exposure: str = "",
+        level: str = "",
+        limit: int = 200,
+        node: str = "",
+        depth: int = 2,
+    ) -> dict[str, Any]:
         """One asset's path and its proof, or the assets of the run, most ACT first. The decision
         service holds the run: nothing here is computed, and no exposure is guessed."""
         out: dict[str, Any] = {"tenant": self.tenant, "exposure": exposure}
+        if node:  # v0.27.2: centred on one node, the list of assets is not what is being read
+            out["node"], out["depth"] = node, depth
+            query = {"node": node, "depth": str(depth)}
+            if level:
+                query["level"] = level
+            try:
+                out["graph"] = self._get("exposure-graph", query)
+            except Problem as problem:
+                out["graph"] = {"state": problem.detail}
+            return out
         if asset:
             try:
                 out["asset"] = self._get(f"assets/{quote(asset, safe='')}/exposure", {})
@@ -1306,9 +1324,14 @@ class Tools:
         query = query or {}
         asset, exposure = (query.get("asset") or "")[:200], (query.get("exposure") or "")[:20]
         level = (query.get("level") or "")[:10].upper()
+        node = (query.get("node") or "")[:200]
+        try:
+            depth = int(query.get("depth") or 2)
+        except ValueError:
+            depth = 2
         who = actor or "analyst (not forwarded)"
         self.audit.write(self.tenant, who, "user" if actor else "token", "page:exposure", "/exposure", dict(query))
-        return exposure_page.page(self._exposure_data(asset, exposure, level))
+        return exposure_page.page(self._exposure_data(asset, exposure, level, 200, node, depth))
 
     def page(self, actor: str = "") -> str:
         """The supervision page (v0.26.2), for the analysts behind the review page's sign-in; who
