@@ -35,7 +35,8 @@ from ngvm.schedule import ScheduleError, next_run
 from ngvm.service import JsonHandler, Problem, TokenSet, moment
 from ngvm.service import serve as _serve
 
-from . import exports, supervision
+from . import exports, pages, supervision
+from . import exposure as exposure_page
 
 log = logging.getLogger("verdict.tools")
 ROLES = {"chat"}
@@ -1251,6 +1252,37 @@ class Tools:
     def _progress(self) -> Any:
         return fit(copy.deepcopy(self._progress_data()), self.max_chars)
 
+    # -- why an asset is exposed as it is (v0.26.3) ---------------------------------------------
+    def _exposure_data(self, asset: str = "", exposure: str = "", limit: int = 200) -> dict[str, Any]:
+        """One asset's path and its proof, or the assets of the run, most ACT first. The decision
+        service holds the run: nothing here is computed, and no exposure is guessed."""
+        out: dict[str, Any] = {"tenant": self.tenant, "exposure": exposure}
+        if asset:
+            try:
+                out["asset"] = self._get(f"assets/{quote(asset, safe='')}/exposure", {})
+            except Problem as problem:
+                if problem.status != HTTPStatus.NOT_FOUND:
+                    raise  # the service is down or refuses: the page says so, it does not invent
+                out["not_found"] = asset
+                return out
+            out["exposure_gaps"] = self._get("summary", {}).get("exposure_gaps") or []
+            return out
+        query = {"limit": str(limit)}
+        if exposure in exposure_page.EXPOSURES:
+            query["exposure"] = exposure
+        answer = self._get("assets", query)
+        out["assets"] = answer.get("items") or []
+        out["total"] = answer.get("total", len(out["assets"]))
+        return out
+
+    def exposure_page(self, actor: str = "", query: dict[str, str] | None = None) -> str:
+        """The exposure page (v0.26.3), beside the run page and behind the same sign-in."""
+        query = query or {}
+        asset, exposure = (query.get("asset") or "")[:200], (query.get("exposure") or "")[:20]
+        who = actor or "analyst (not forwarded)"
+        self.audit.write(self.tenant, who, "user" if actor else "token", "page:exposure", "/exposure", dict(query))
+        return exposure_page.page(self._exposure_data(asset, exposure))
+
     def page(self, actor: str = "") -> str:
         """The supervision page (v0.26.2), for the analysts behind the review page's sign-in; who
         looked is journaled, as every call of the chat is. The page carries no token: whoever reaches
@@ -1391,9 +1423,16 @@ def make_handler(tools: Tools) -> type[JsonHandler]:
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if url.path in ("/run", "/run/"):  # v0.26.2: the supervision page, through the review's proxy
+            if url.path in ("/run", "/run/", "/exposure", "/exposure/"):  # v0.26.2, v0.26.3: the pages
                 try:
-                    body = tools.page(self._analyst()).encode("utf-8")
+                    if url.path.startswith("/run"):
+                        body = tools.page(self._analyst()).encode("utf-8")
+                    else:
+                        body = tools.exposure_page(self._analyst(), dict(parse_qsl(url.query))).encode("utf-8")
+                except Problem as problem:  # a service of the tenant did not answer: say so as a page
+                    body = pages.message(
+                        "NGVM", "<b>NGVM</b><span><a href='/run'>the run</a></span>", problem.detail
+                    ).encode("utf-8")
                 except Exception:  # noqa: BLE001 - answer rather than drop the connection
                     log.exception("GET %s failed", url.path)
                     self.send_problem(Problem(HTTPStatus.INTERNAL_SERVER_ERROR, "internal error"))
@@ -1401,7 +1440,7 @@ def make_handler(tools: Tools) -> type[JsonHandler]:
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Content-Security-Policy", supervision.CSP)
+                self.send_header("Content-Security-Policy", pages.CSP)
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Referrer-Policy", "no-referrer")

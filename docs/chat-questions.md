@@ -83,7 +83,7 @@ How to ask:
 - Que sait-on de web01 ?
 - D'où vient l'exposition de l'image vllm/vllm-openai:latest ?
 
-**`get_exposure_path`**: why an asset is exposed: the path from the internet or a zone its exposure rests on.
+**`get_exposure_path`**: why an asset is exposed: the path from the internet or a zone its exposure rests on (the same path drawn, as a page: /exposure, v0.26.3).
 
 - Comment srv01 est-il joignable depuis Internet ?
 

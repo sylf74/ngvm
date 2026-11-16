@@ -5,6 +5,23 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.26.3 — 2026-11-16
+
+The exposure of an asset, drawn.
+
+- **The exposure page**, at `/exposure` of the review page's host, beside the run page and behind the
+  same sign-in: the assets of the latest run, most ACT first, and for one of them the path its
+  exposure rests on — the internet or a zone, the flow, the service, the asset — each step with the
+  source that saw it and the day. Beside the path: the ports the collection saw on the asset, and
+  the exposure gaps that concern it. An exposure with no path says plainly that nothing proves it.
+- **One look for the analysts' pages**: the run page and the exposure page are built from the same
+  shell (`pages.py`), style and text only, no script and no image.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.26.3`. A
+tenant with the review page and the chat gets the page at `/exposure` of its review host, with
+nothing to set; it shows what the latest run computed, so a tenant that has not run since v0.24.0
+has no path to show.
+
 ## v0.26.2 — 2026-11-16
 
 Where a run is, without a terminal.
