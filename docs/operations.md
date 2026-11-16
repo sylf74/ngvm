@@ -1,4 +1,4 @@
-# Operator's manual (v0.26.2)
+# Operator's manual (v0.26.3)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -130,6 +130,21 @@ kubectl -n ngvm-lab port-forward deploy/ngvm-lab-tools 8080:8080
 The second command gives the page at `http://127.0.0.1:8080/run` for a tenant without the review
 page; whoever reaches that port sees it, so the NetworkPolicy lets only oauth2-proxy and the chat
 reach it, as for the review page.
+
+### Why an asset is exposed: the path, drawn (v0.26.3)
+
+At `/exposure` of the same host, beside the run page. Without an asset it lists those of the latest
+run, most ACT first, with the exposure of each and where that value comes from; `?asset=<id>`, or a
+click on a name, draws the path the exposure rests on: the internet or a zone, the flow, the service,
+the asset, each step with the source that saw it and the day. Under it, the ports the collection saw
+on the asset, and the exposure gaps that concern it — where the client's declaration and the
+observation differ.
+
+Read it when a client disputes a priority (« pourquoi web01 est-il en ACT ? »): the path is the
+proof the run kept, and an exposure marked `assumed` is the worst case taken for want of proof, not
+a measure — a scan of the asset or a flow declared in the profile settles it (`docs/scanning.md`,
+the profile's `zones` and `flows`). The chat gives the same thing in words with
+`get_exposure_path`.
 
 ### What the LLM cost, and whether it is worth it (v0.23.7)
 

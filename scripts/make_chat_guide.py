@@ -37,7 +37,8 @@ THEMES = [
         "review, SLA",
         "get_decision": "one decision in full: why this level, its SSVC inputs, fixes, due dates",
         "get_asset": "one asset, its context and its decisions",
-        "get_exposure_path": "why an asset is exposed: the path from the internet or a zone its exposure rests on",
+        "get_exposure_path": "why an asset is exposed: the path from the internet or a zone its exposure rests on "
+        "(the same path drawn, as a page: /exposure, v0.26.3)",
     }),
     ("What changed, what was fixed, what to do", {
         "what_changed": "the decisions new, gone or at another level since the run before, and why",

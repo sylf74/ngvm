@@ -66,9 +66,10 @@ spec:
             - --redirect-url={{ printf "https://%s/oauth2/callback" $r.host }}
             - --upstream={{ printf "http://%s-via:8081/" $name }}
             {{- if .Values.chat.enabled }}
-            # v0.26.2: the supervision page of the run, served by the tool server; the same analysts,
-            # the same sign-in, one path of its own (oauth2-proxy routes by the longest path).
+            # v0.26.2, v0.26.3: the pages of the tool server (the run, the exposure paths); the same
+            # analysts, the same sign-in, one path each (oauth2-proxy routes by the longest path).
             - --upstream={{ printf "http://%s-tools:8080/run" $name }}
+            - --upstream={{ printf "http://%s-tools:8080/exposure" $name }}
             {{- end }}
             - --scope=openid email profile
             - --code-challenge-method=S256
@@ -231,7 +232,7 @@ spec:
 {{- if .Values.watch.networkPolicy.enabled }}
 ---
 # oauth2-proxy: from the ingress controller only; to the identity provider, the review page, the tool
-# server (the supervision page of the run, v0.26.2) and the DNS.
+# server (the pages of the run and of the exposure paths, v0.26.2) and the DNS.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
