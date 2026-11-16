@@ -5,6 +5,30 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.0 — 2026-11-16
+
+Where to act first, from the paths the run already kept.
+
+- **The chokepoints of a run**: the nodes the paths to the assets carrying an ACT decision go
+  through — a zone, a published endpoint, a port that answers — ranked by the findings behind each,
+  with the assets it leads to. A zone that carries the way in to twelve assets is one ticket, not
+  twelve. Computed in memory from the run the decision service already holds
+  (`GET /v1/tenants/<t>/exposure-graph`, read token): no graph database, nothing more pushed.
+- **The graph drawn** at the top of the exposure page: four columns (the way in, the zones, what
+  answers, the assets), each link as thick as the findings behind it and naming what was crossed,
+  what saw it and when; an asset leads to its own path. `?level=ATTEND` reads the level below.
+- **In the chat**, `list_chokepoints` answers « par quoi commencer ? » with the same ranking.
+- **Fix of v0.26.3**: on an asset's path, the link between two steps now carries what was crossed to
+  enter the step that follows, with the source and the date of that crossing. The labels were shifted
+  by one step, so a path read `listens` where the run had observed `reaches`.
+
+What it does not claim: a chokepoint is a node the observed paths go through, counted — not a
+minimum cut. Closing it cuts the paths listed, not every path that may exist, and the assets whose
+exposure is assumed have no path at all: they are counted apart, never drawn.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.0`. The
+page and the tool read the latest run: a tenant that has not run since v0.24.0 has no path to show.
+
 ## v0.26.3 — 2026-11-16
 
 The exposure of an asset, drawn.
