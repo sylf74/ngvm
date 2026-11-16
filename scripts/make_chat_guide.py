@@ -39,6 +39,8 @@ THEMES = [
         "get_asset": "one asset, its context and its decisions",
         "get_exposure_path": "why an asset is exposed: the path from the internet or a zone its exposure rests on "
         "(the same path drawn, as a page: /exposure, v0.26.3)",
+        "list_chokepoints": "where the ways in to the assets that matter meet: the nodes most paths go through, "
+        "ranked by the findings behind them (drawn on the /exposure page, v0.27.0)",
     }),
     ("What changed, what was fixed, what to do", {
         "what_changed": "the decisions new, gone or at another level since the run before, and why",

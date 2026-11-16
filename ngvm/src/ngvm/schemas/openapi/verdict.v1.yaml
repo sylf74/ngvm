@@ -102,6 +102,43 @@ paths:
                         sla: {type: [object, "null"], additionalProperties: true}
         "401": {$ref: "#/components/responses/Problem"}
         "404": {$ref: "#/components/responses/Problem"}
+  /v1/tenants/{tenant}/exposure-graph:
+    get:
+      tags: [read]
+      operationId: getExposureGraph
+      summary: >-
+        Where the paths to the assets that matter meet (since v0.27.0): the chokepoints of the run,
+        ranked by the findings behind them, and the graph of the paths they are on. Computed from the
+        exposure paths the run kept (v0.24.0); the internet is drawn but never ranked, and an asset
+        whose exposure is assumed has no path, so it is counted apart
+      security:
+        - readToken: []
+      parameters:
+        - $ref: "#/components/parameters/tenant"
+        - name: level
+          in: query
+          required: false
+          description: The decisions that make an asset worth a path (default ACT)
+          schema: {enum: [ACT, ATTEND, TRACK], default: ACT}
+        - name: top
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200, default: 40}
+        - name: max_nodes
+          in: query
+          required: false
+          description: Nodes kept for drawing, heaviest first
+          schema: {type: integer, minimum: 1, maximum: 400, default: 60}
+        - $ref: "#/components/parameters/run"
+      responses:
+        "200":
+          description: The chokepoints and the graph (ngvm.exposure_graph/1)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExposureGraph"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
   /v1/tenants/{tenant}/progress:
     post:
       tags: [publish]
@@ -519,6 +556,51 @@ components:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
   schemas:
+    ExposureGraph:
+      type: object
+      required: [schema, run, level, chokepoints, nodes, edges]
+      properties:
+        schema: {const: ngvm.exposure_graph/1}
+        run: {type: string}
+        level: {enum: [ACT, ATTEND, TRACK]}
+        assets_with_findings: {type: integer, description: "Assets carrying at least one finding at this level"}
+        assets_without_path: {type: integer, description: "Of those, the ones whose exposure is assumed: no path"}
+        findings: {type: integer}
+        chokepoints_total: {type: integer}
+        nodes_total: {type: integer}
+        edges_total: {type: integer}
+        truncated: {type: boolean, description: "Nodes were left out of nodes/edges, the lightest first"}
+        chokepoints:
+          type: array
+          description: The nodes the paths go through, the heaviest first; never the asset itself or the internet
+          items: {$ref: "#/components/schemas/GraphNode"}
+        nodes:
+          type: array
+          items: {$ref: "#/components/schemas/GraphNode"}
+        edges:
+          type: array
+          items:
+            type: object
+            required: [source, target]
+            properties:
+              source: {type: string}
+              target: {type: string}
+              via: {type: string, description: "What was crossed to enter the target: flow, reaches, listens, member_of, publishes, routes_to"}
+              evidence: {type: string, description: "What saw it: a scanner, a declared flow"}
+              seen: {type: string}
+              assets: {type: integer}
+              findings: {type: integer}
+    GraphNode:
+      type: object
+      required: [node, kind, label]
+      properties:
+        node: {type: string}
+        kind: {enum: [internet, zone, endpoint, service, declared, host, image, process, component]}
+        label: {type: string}
+        column: {type: integer, description: "0 the way in, 3 the asset: where it sits when the paths are drawn"}
+        assets: {type: integer}
+        findings: {type: integer}
+        examples: {type: array, items: {type: string}, description: "Some of the assets behind it, by name"}
     ProgressStep:
       type: object
       required: [schema, run, step, state]

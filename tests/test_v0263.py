@@ -128,6 +128,8 @@ def _handler(asked: list, detail: dict | None = None, status: int = 200):
             return httpx.Response(200, json={"run_id": "r7", "exposure_gaps": GAPS})
         if request.url.path.endswith("/assets"):
             return httpx.Response(200, json={"items": ASSETS, "total": 1240})
+        if request.url.path.endswith("/exposure-graph"):  # v0.27.0, not served by this fake service
+            return httpx.Response(404, json={"detail": "no such route"})
         return httpx.Response(404, json={"detail": "no"})
 
     return handler
@@ -156,6 +158,7 @@ def test_the_assets_are_asked_with_the_filter(tmp_path) -> None:
     tools = _tools(tmp_path, _handler(asked))
     data = tools._exposure_data(exposure="open")
     assert data["total"] == 1240 and len(data["assets"]) == 2
+    assert data["graph"] == {"state": "no such route"}  # the page goes on without the drawing
     assert asked[0][1] == {"limit": "200", "exposure": "open"}
     _tools(tmp_path, _handler(asked))._exposure_data(exposure="nonsense")
     assert "exposure" not in asked[-1][1]  # only the three the run knows

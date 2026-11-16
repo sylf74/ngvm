@@ -307,6 +307,8 @@ class Service:
                 return idx.assets(query)
             if rest == "components":
                 return idx.components(query)
+            if rest == "exposure-graph":  # v0.27.0: the chokepoints of the paths and their graph
+                return idx.exposure_graph(query)
             if rest == "coverage":
                 try:
                     return idx.coverage(query)

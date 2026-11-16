@@ -87,6 +87,11 @@ How to ask:
 
 - Comment srv01 est-il joignable depuis Internet ?
 
+**`list_chokepoints`**: where the ways in to the assets that matter meet: the nodes most paths go through, ranked by the findings behind them (drawn on the /exposure page, v0.27.0).
+
+- Par quoi commencer pour couper le plus d'ACT ?
+- Quel proxy porte le plus d'exposition ?
+
 ## What changed, what was fixed, what to do
 
 **`what_changed`**: the decisions new, gone or at another level since the run before, and why.

@@ -30,6 +30,8 @@ questions:
   - {q: "Quelles vulnérabilités ont été corrigées en octobre ?", tool: list_closed_findings, params: [since, until], why: closed}
   - {q: "Quelles corrections déclarées ne sont pas encore confirmées par un scan ?", tool: list_unverified_findings, params: [since], why: scan}
   - {q: "Quels correctifs appliquer sur web01, dans quel ordre ?", tool: get_fix_plan, params: [asset], why: fix}
+  - {q: "Par quoi commencer pour couper le plus d'ACT ?", tool: list_chokepoints, params: [level], why: close first}
+  - {q: "Quel proxy porte le plus d'exposition ?", tool: list_chokepoints, params: [], why: most exposure}
   - {q: "Combien de tickets envoyés à iTop en octobre, avec leurs numéros ?", tool: list_tickets, params: [since, until], why: ITSM}
   - {q: "Fais-moi un Word des ACT exposées", tool: export_decisions, params: [format, level, exposure], why: docx}
   - {q: "Quand a tourné le dernier run ?", tool: list_runs, params: [], why: runs}
