@@ -5,6 +5,29 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.26.2 — 2026-11-16
+
+Where a run is, without a terminal.
+
+- **The supervision page of the run**, at `/run` of the review page's host (the same sign-in and the
+  same analyst groups as the alerts): the chain of the daily run in the order it runs, with the
+  state of each step (running, done, partial, failed), its duration, what it wrote and the pod to
+  read its log in; then the numbers worth watching for each of the four pillars — new CVEs over 24
+  hours and those in KEV, alerts to review, assets and coverage, collectors late, decisions per
+  level and what the LLM cost, tickets by state; then the services that run beside the chain, with
+  the shared volume's filling. It refreshes itself every 30 seconds and keeps no state of its own.
+- **Each step says where it is** when it starts and when it ends, on the working volume
+  (`/data/progress`) and to the decision service, which keeps the last five runs and serves them
+  (`GET /v1/tenants/<t>/progress`, read token; the steps push with the publish token they already
+  hold). A step is never stopped by this: a push refused prints a `WARN  progress:` line and the
+  step goes on. `daily.progress: false` switches the records off.
+- **In the chat**, `get_run_progress` answers « où en est le run ? », « quelle étape a échoué ? »,
+  « le run de ce matin est-il fini ? » with the same chain and the same numbers.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.26.2`. A
+tenant with the review page and the chat gets the page at `/run` of its review host, with nothing
+to set; the page is empty until the first daily run of this version reports its steps.
+
 ## v0.26.1 — 2026-11-15
 
 A fix of v0.26.0, which did not close the case it was for.

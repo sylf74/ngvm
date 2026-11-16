@@ -35,7 +35,7 @@ from ngvm.schedule import ScheduleError, next_run
 from ngvm.service import JsonHandler, Problem, TokenSet, moment
 from ngvm.service import serve as _serve
 
-from . import exports
+from . import exports, supervision
 
 log = logging.getLogger("verdict.tools")
 ROLES = {"chat"}
@@ -46,6 +46,7 @@ LIST_MAX = 10
 EXPORT_MAX = 500
 EXPLAIN_MAX = 30
 EXPORT_TTL = 3600  # seconds a download link stays valid
+PROGRESS_CACHE = 20.0  # seconds the chain and the pillars' numbers are kept (v0.26.2)
 EXPORT_KEEP = 50  # documents kept at most
 EXPORT_PATH = re.compile(r"^/ngvm/exports/(?P<token>[A-Za-z0-9_-]{32,64})/(?P<name>[A-Za-z0-9._-]{1,120})$")
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -445,6 +446,21 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
         "platform",
     ),
     (
+        "/run-progress",
+        "get_run_progress",
+        "Where the tenant's daily run is (v0.26.2): each step of the chain in the order it runs "
+        "(collect, via, detect, assets, triage, inventory, publish, dispatch) with its state (running, "
+        "done, partial, failed), how long it took, its exit code, what it wrote and the pod to read its "
+        "log in; then the numbers worth watching for each pillar (watch: new CVEs in 24 hours, those in "
+        "KEV, alerts to review; detection: assets, coverage, collectors late; triage: decisions per "
+        "level, what the LLM cost; dispatch: tickets by state), and the services that run beside the "
+        "chain. Use it for 'where is the run', 'is the run finished', 'which step failed', 'how far "
+        "along is today's run', 'why is the run late'. get_platform_status answers about versions and "
+        "the next run instead.",
+        [],
+        "progress",
+    ),
+    (
         "/collectors",
         "list_collectors",
         "The collectors of this tenant (v0.23.9), from the detection service: for each collector and "
@@ -608,6 +624,28 @@ def fit(answer: Any, max_chars: int = MAX_CHARS) -> Any:
     return out
 
 
+def _with_waiting(steps: list[dict[str, Any]], before: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The chain of a run going on, with the steps it has not reached yet (v0.26.2). Which steps a
+    tenant runs is the chart's business, so they are taken from the run before rather than assumed."""
+    seen = {s.get("step") for s in steps}
+    waiting = [
+        {"step": s.get("step"), "order": s.get("order", 99), "pillar": s.get("pillar", "other"), "state": "waiting"}
+        for s in before
+        if s.get("step") not in seen
+    ]
+    return sorted([*steps, *waiting], key=lambda s: (s.get("order", 99), str(s.get("step", ""))))
+
+
+def _chain_state(steps: list[dict[str, Any]]) -> str:
+    """Where a run stands, from the states of its steps (v0.26.2): a failed step stops the chain, so
+    it decides; a step still running means the run is going on; a partial step is a warning."""
+    states = {str(s.get("state", "")) for s in steps}
+    for state in ("failed", "running", "partial"):
+        if state in states:
+            return state
+    return "done" if states else ""
+
+
 class Tools:
     """The tool server's logic, free of HTTP (tested directly)."""
 
@@ -686,6 +724,8 @@ class Tools:
         self.export_ttl = export_ttl
         self._exports: dict[str, tuple[float, str, str, bytes]] = {}
         self._exports_lock = threading.Lock()
+        self._progress_cached: tuple[float, dict[str, Any]] | None = None  # v0.26.2
+        self._progress_lock = threading.Lock()
         self.tokens = tokens
         self.max_chars = max_chars
         self.spec = openapi(tenant)
@@ -760,6 +800,8 @@ class Tools:
                 return self.export(query)
             if upstream == "platform":
                 return self._platform()
+            if upstream == "progress":
+                return self._progress()
             if upstream == "detect:status":
                 return self._collectors(query)
             if upstream.startswith("dispatch:"):
@@ -1073,6 +1115,150 @@ class Tools:
             }
         return fit(answer, self.max_chars)
 
+    # -- where the run is, pillar by pillar (v0.26.2) -------------------------------------------
+    def _alert_counts(self) -> dict[str, int]:
+        """The alerts of the watch by status, counted here: the watch service pages them."""
+        answer = self._json(self._via, f"/v1/tenants/{self.tenant}/alerts", "watch service", {"limit": "200"})
+        counts: dict[str, int] = {}
+        for alert in answer.get("items") or []:
+            status = str(alert.get("status", ""))
+            if status:
+                counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    def _new_counts(self) -> dict[str, Any]:
+        """How many CVEs the shared service saw in the last 24 hours, and how many of them matter:
+        three calls of `limit=1` (the totals), the filtered ones read the records of the period."""
+        if self._intel is None:
+            return {}
+        since = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)).isoformat(timespec="seconds")
+        out: dict[str, Any] = {}
+        for name, params in (
+            ("new_cves_24h", {"since": since, "limit": "1"}),
+            ("new_cves_kev", {"since": since, "limit": "1", "kev": "true"}),
+            ("new_cves_critical", {"since": since, "limit": "1", "min_cvss": "9"}),
+        ):
+            answer = self._json(self._intel, "/v1/records/new", "shared intelligence service", params)
+            if isinstance(answer.get("total"), int):
+                out[name] = answer["total"]
+        return out
+
+    def _progress_data(self, max_age: float = PROGRESS_CACHE) -> dict[str, Any]:
+        """The chain of the current run and the numbers of the four pillars, as the page shows them.
+
+        Kept for a few seconds: the page asks for itself again while a run goes on, and some of these
+        numbers cost the services that answer them.
+        """
+        with self._progress_lock:
+            cached = self._progress_cached
+        if cached is not None and time.monotonic() - cached[0] < max_age:
+            return cached[1]
+        chains = self._json(self._http, f"/v1/tenants/{self.tenant}/progress", "decision service", {"limit": "2"})
+        runs = chains.get("runs") or []
+        run = dict(runs[0]) if runs else {}
+        previous = runs[1] if len(runs) > 1 else {}
+        if run:
+            run["state"] = _chain_state(run.get("steps") or [])
+            if run["state"] == "running":  # the steps the run has not reached yet, from the run before
+                run["steps"] = _with_waiting(run.get("steps") or [], previous.get("steps") or [])
+        previous = (
+            {"run": previous.get("run", ""), "state": _chain_state(previous.get("steps") or [])} if previous else {}
+        )
+        summary = self._json(self._http, f"/v1/tenants/{self.tenant}/summary", "decision service")
+        via = self._json(self._via, f"/v1/tenants/{self.tenant}/status", "watch service")
+        detect = self._detect_status()
+        intel = self._json(self._intel, "/v1/status", "shared intelligence service") if self._intel else {}
+        tickets = self._json(self._dispatch, f"/v1/tenants/{self.tenant}/tickets", "dispatch service", {"limit": "1"})
+        collectors = [
+            {"collector": c.get("id"), "source": x.get("source"), "last_push": x.get("last_push", x.get("pushed_at")),
+             "age_hours": x.get("age_hours"), "stale": bool(x.get("stale")), "last_error": x.get("last_error", "")}
+            for c in detect.get("collectors", []) for x in c.get("sources", [])
+        ]  # fmt: skip
+        counts = tickets.get("counts") or {}
+        volume = intel.get("volume") if isinstance(intel, dict) else None
+        data: dict[str, Any] = {
+            "tenant": self.tenant,
+            "run": run,
+            "previous_run": previous,
+            "pillars": {
+                "watch": {
+                    **self._new_counts(),
+                    "last_passage": via.get("last_passage", ""),
+                    "alerts_last_24h": via.get("alerts_last_24h"),
+                    "alerts_by_status": self._alert_counts() if self._via is not None else {},
+                    "failing_sources": via.get("failing_sources") or [],
+                    "state": via.get("state", ""),
+                },
+                "detection": {
+                    "assets": summary.get("assets"),
+                    "assets_with_findings": summary.get("assets_with_findings"),
+                    "coverage": summary.get("coverage") or {},
+                    "collectors": len(detect.get("collectors", [])),
+                    "late_or_refused": [c for c in collectors if c["stale"] or c["last_error"]],
+                    "state": detect.get("state", ""),
+                },
+                "triage": {
+                    "findings": summary.get("findings") or {},
+                    "kev": summary.get("kev") or {},
+                    "by_exposure": summary.get("by_exposure") or {},
+                    "needs_review": summary.get("needs_review"),
+                    "cve_count": summary.get("cve_count"),
+                    "llm_usage": summary.get("llm_usage") or {},
+                    "sla": summary.get("sla") or {},
+                    "state": summary.get("state", ""),
+                },
+                "dispatch": {
+                    "tickets": tickets.get("total"),
+                    "by_state": counts.get("by_state") or {},
+                    "by_level": counts.get("by_level") or {},
+                    "with_itsm_ref": counts.get("with_itsm_ref"),
+                    "pending_requests": self._open_requests(),
+                    "state": tickets.get("state", ""),
+                },
+            },
+            "agents": {
+                "decision": summary.get("ngvm_version", "") or "no run yet",
+                "watch": via.get("version", via.get("state", "")),
+                "detection": detect.get("version", detect.get("state", "")),
+                "shared_intelligence": intel.get("version", intel.get("state", "not used for this tenant")),
+                "shared_intelligence_volume": {
+                    "used_percent": volume["used_percent"],
+                    "free_gb": round(volume["free_bytes"] / 1e9, 1),
+                    "alert": bool(volume.get("alert")),
+                }
+                if isinstance(volume, dict) and "used_percent" in volume
+                else {},
+                "next_daily_run": self._daily_next(),
+                "collectors": collectors,
+            },
+            "note": "a step is done, partial (exit 3: a warning, the run goes on), failed or running; the "
+            "numbers of each pillar come from the service that owns them, not from this page",
+            "source": "NGVM: the steps from the decision service, the numbers from each pillar's service",
+        }
+        with self._progress_lock:
+            self._progress_cached = (time.monotonic(), data)
+        return data
+
+    def _open_requests(self) -> int | None:
+        """Actions waiting for a validator (v0.23.10), when the tenant has a database."""
+        if self.actions is None:
+            return None
+        try:
+            return len(self.actions.list(self.tenant, ("open",)))
+        except ActionError:
+            return None
+
+    def _progress(self) -> Any:
+        return fit(copy.deepcopy(self._progress_data()), self.max_chars)
+
+    def page(self, actor: str = "") -> str:
+        """The supervision page (v0.26.2), for the analysts behind the review page's sign-in; who
+        looked is journaled, as every call of the chat is. The page carries no token: whoever reaches
+        this port sees it, and the NetworkPolicy lets only oauth2-proxy and the chat reach it."""
+        who = actor or "analyst (not forwarded)"
+        self.audit.write(self.tenant, who, "user" if actor else "token", "page:run", "/run", {})
+        return supervision.page(self._progress_data(), self.review_url)
+
     # -- documents ------------------------------------------------------------------------------
     def _raw(self, target: str, query: dict[str, str]) -> dict[str, Any]:
         try:
@@ -1205,6 +1391,23 @@ def make_handler(tools: Tools) -> type[JsonHandler]:
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if url.path in ("/run", "/run/"):  # v0.26.2: the supervision page, through the review's proxy
+                try:
+                    body = tools.page(self._analyst()).encode("utf-8")
+                except Exception:  # noqa: BLE001 - answer rather than drop the connection
+                    log.exception("GET %s failed", url.path)
+                    self.send_problem(Problem(HTTPStatus.INTERNAL_SERVER_ERROR, "internal error"))
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Security-Policy", supervision.CSP)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             try:
                 if url.path == "/openapi.json":
                     tools.tokens.require(self.bearer(), "chat")
@@ -1217,6 +1420,14 @@ def make_handler(tools: Tools) -> type[JsonHandler]:
             except Exception:  # noqa: BLE001 - answer rather than drop the connection
                 log.exception("GET %s failed", url.path)
                 self.send_problem(Problem(HTTPStatus.INTERNAL_SERVER_ERROR, "internal error"))
+
+        def _analyst(self) -> str:
+            """Who oauth2-proxy signed in for the supervision page (v0.26.2)."""
+            for h in ("X-Forwarded-Email", "X-Forwarded-User", "X-Forwarded-Preferred-Username"):
+                value = (self.headers.get(h) or "").strip()
+                if value and len(value) <= 200 and not any(c in value for c in "\r\n"):
+                    return value
+            return ""
 
         def _actor(self) -> str:
             """The user Open WebUI forwards (ENABLE_FORWARD_USER_INFO_HEADERS), its e-mail first."""

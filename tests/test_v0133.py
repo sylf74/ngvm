@@ -116,9 +116,13 @@ def test_one_daily_run_at_a_time_on_the_volume():
     assert 'echo "$HOSTNAME" > /data/.ngvm-run/pod' in collect
     owner = '"$(cat /data/.ngvm-run/pod 2>/dev/null)" = "$HOSTNAME"'
     release = chart.split('{{- define "ngvm-tenant.release" -}}', 1)[1].split("{{- end -}}", 1)[0]
-    assert f"trap 'if [ {owner} ]; then rm -rf /data/.ngvm-run; fi' EXIT" in release
+    # Since v0.26.2 the trap says where the step got to, then releases the volume through ngvm_release.
+    assert "trap 'rc=$?; ngvm_progress end \"$rc\"; ngvm_release' EXIT" in release
+    container = chart.split('{{- define "ngvm-tenant.container" -}}', 1)[1]
+    assert f"ngvm_release() {{ if [ {owner} ]; then rm -rf /data/.ngvm-run; fi; }}" in container
     # The last step releases the lock: publish, or dispatch after it (v0.20.0).
     for step in ("publish", "dispatch"):
         body = chart.split(f'{{{{- define "ngvm-tenant.step.{step}" -}}}}', 1)[1]
         assert '{{ include "ngvm-tenant.release" . }}' in body.split("{{- define", 1)[0]
-    assert f'[ "$rc" -ne 0 ] && [ {owner} ]' in chart  # a failed step releases its own run's lock only
+    # A failed step releases its own run's lock only (the owner is checked in ngvm_release).
+    assert 'if [ "$rc" -ne 0 ]; then ngvm_release; fi' in container

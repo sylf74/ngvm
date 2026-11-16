@@ -65,6 +65,11 @@ spec:
             - --cookie-expire={{ $r.proxy.cookieHours }}h
             - --redirect-url={{ printf "https://%s/oauth2/callback" $r.host }}
             - --upstream={{ printf "http://%s-via:8081/" $name }}
+            {{- if .Values.chat.enabled }}
+            # v0.26.2: the supervision page of the run, served by the tool server; the same analysts,
+            # the same sign-in, one path of its own (oauth2-proxy routes by the longest path).
+            - --upstream={{ printf "http://%s-tools:8080/run" $name }}
+            {{- end }}
             - --scope=openid email profile
             - --code-challenge-method=S256
             - --oidc-groups-claim={{ $o.groupsClaim }}
@@ -225,7 +230,8 @@ spec:
       {{- include "ngvm-tenant.watchPod" (dict "root" . "container" "sender" "script" $script "restartPolicy" "Always" "resources" $r.sender.resources) | nindent 6 }}
 {{- if .Values.watch.networkPolicy.enabled }}
 ---
-# oauth2-proxy: from the ingress controller only; to the identity provider, the review page and the DNS.
+# oauth2-proxy: from the ingress controller only; to the identity provider, the review page, the tool
+# server (the supervision page of the run, v0.26.2) and the DNS.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -252,6 +258,14 @@ spec:
               {{- include "ngvm-tenant.selector" (dict "root" . "component" "via") | nindent 14 }}
       ports:
         - {port: 8081, protocol: TCP}
+    {{- if .Values.chat.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ngvm-tenant.selector" (dict "root" . "component" "tools") | nindent 14 }}
+      ports:
+        - {port: 8080, protocol: TCP}
+    {{- end }}
     {{- include "ngvm-tenant.oidcEgress" . | nindent 4 }}
     - to:
         - namespaceSelector:

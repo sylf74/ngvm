@@ -509,8 +509,8 @@ spec:
                   name: http
 {{- if $chat.networkPolicy.enabled }}
 ---
-# The tool server: from Open WebUI, and from the ingress controller for the downloads; to the
-# decision service and the DNS only.
+# The tool server: from Open WebUI, from the review page's oauth2-proxy (the supervision page of the
+# run, v0.26.2) and from the ingress controller for the downloads; to the decision service and the DNS only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -528,6 +528,13 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "ngvm-tenant.selector" (dict "root" . "component" "chat") | nindent 14 }}
+        {{- if and .Values.watch.enabled .Values.watch.review.enabled }}
+        # v0.26.2: the review page's oauth2-proxy, which serves /run (the supervision page) to the
+        # analysts it signed in. The page has no token of its own: this policy is what keeps it to them.
+        - podSelector:
+            matchLabels:
+              {{- include "ngvm-tenant.selector" (dict "root" . "component" "review") | nindent 14 }}
+        {{- end }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $chat.networkPolicy.ingressNamespace | quote }}

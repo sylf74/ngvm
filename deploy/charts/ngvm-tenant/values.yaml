@@ -427,6 +427,11 @@ daily:
   failedJobsHistoryLimit: 3
   # Runs in a row a reporting database refuses before the daily job ends failed (v0.23.4).
   publishFailures: 3
+  # Each step says where it is, at its start and at its end (v0.26.2): on the working volume
+  # (/data/progress) and, with verdict.enabled, to the decision service, which serves the
+  # supervision page (/run of the review page) and the chat's get_run_progress. A step is never
+  # stopped by this: a push that fails prints a warning and the step goes on.
+  progress: true
 
 # Name of the Secret holding the tenant's secrets. Every key is optional:
 #   ssh-key         private key of the read-only scan account

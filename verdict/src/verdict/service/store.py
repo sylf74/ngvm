@@ -7,6 +7,7 @@ v0.18.0), one folder per tenant:
   <root>/<tenant>/runs/<id>.json.gz     the triage document as received (gzip)
   <root>/<tenant>/runs/<id>.meta.json   its receipt: generated_at, received_at, digest, counts
   <root>/<tenant>/_keys/<sha256>        idempotency: key of the push -> id
+  <root>/<tenant>/progress/<run>.json   where each step of a daily run got to (v0.26.2)
 
 The last `keep` runs by generated_at are kept. Writes go to a temporary file renamed into place.
 """
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 RID = re.compile(r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
+PROGRESS_KEEP = 5  # daily runs whose chain of steps is kept (v0.26.2)
 
 
 @dataclass
@@ -50,6 +52,28 @@ def _atomic(path: Path, data: bytes) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_bytes(data)
     os.replace(tmp, path)
+
+
+def _chain(path: Path) -> dict[str, Any] | None:
+    """A run's chain of steps as kept on the volume, or None when there is none to read."""
+    try:
+        chain = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(chain, dict) or not isinstance(chain.get("steps"), dict):
+        return None
+    return chain
+
+
+def _steps(chain: dict[str, Any]) -> dict[str, Any]:
+    """A chain as it is served: its steps in the order of the run."""
+    steps = sorted(chain["steps"].values(), key=lambda s: (s.get("order", 99), s.get("step", "")))
+    return {
+        "run": chain.get("run", ""),
+        "run_started_at": chain.get("run_started_at", ""),
+        "updated_at": chain.get("updated_at", ""),
+        "steps": steps,
+    }
 
 
 def parse_time(value: str) -> dt.datetime:
@@ -148,6 +172,33 @@ class RunStore:
         if not path.exists():
             return None
         return json.loads(gzip.decompress(path.read_bytes()))
+
+    # -- where the daily run is (v0.26.2) ---------------------------------------------------------
+    def put_progress(self, tenant: str, entry: dict[str, Any], now: dt.datetime | None = None) -> dict[str, Any]:
+        """One step's record into its run's chain; the chain as it now stands. The last
+        PROGRESS_KEEP runs are kept: a chain is a few hundred bytes, the volume holds the runs."""
+        now = now or dt.datetime.now(dt.UTC)
+        folder = self.root / tenant / "progress"
+        path = folder / f"{entry['run']}.json"
+        with self._lock:
+            chain = _chain(path) or {"run": entry["run"], "steps": {}}
+            chain["steps"][entry["step"]] = {**chain["steps"].get(entry["step"], {}), **entry}
+            chain["run_started_at"] = entry.get("run_started_at") or chain.get("run_started_at", "")
+            chain["updated_at"] = now.isoformat()  # microseconds: several steps land in the same second
+            _atomic(path, json.dumps(chain, ensure_ascii=False).encode())
+            for old in self._chains(tenant)[PROGRESS_KEEP:]:
+                (folder / f"{old['run']}.json").unlink(missing_ok=True)
+        return _steps(chain)
+
+    def progress(self, tenant: str, limit: int = 2) -> list[dict[str, Any]]:
+        """The chains kept, the run last written first."""
+        return [_steps(chain) for chain in self._chains(tenant)[: max(1, limit)]]
+
+    def _chains(self, tenant: str) -> list[dict[str, Any]]:
+        """Every chain kept, the one last written first. Ordered on what each chain says, never on
+        the file's own date: a run writes its steps within one second of the one before (v0.26.2)."""
+        chains = [c for c in (_chain(p) for p in (self.root / tenant / "progress").glob("*.json")) if c is not None]
+        return sorted(chains, key=lambda c: (str(c.get("updated_at", "")), str(c.get("run", ""))), reverse=True)
 
     def _prune(self, tenant: str) -> None:
         folder = self.root / tenant / "runs"

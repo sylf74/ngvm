@@ -1,4 +1,4 @@
-# Operator's manual (v0.26.1)
+# Operator's manual (v0.26.2)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -98,6 +98,38 @@ kubectl -n ngvm-lab get pod <pod> -o jsonpath='{range .status.initContainerStatu
 The last command gives the exit code of each step of a daily run: the first one not `0` is the one
 to read (`-c <step>`). Exit code 3 is a warning (partial collection, a database unreachable): the
 run goes on.
+
+### The supervision page: where the run is (v0.26.2)
+
+Each step of the daily chain says where it is, when it starts and when it ends: on the working
+volume (`/data/progress`) and to the decision service, which keeps the last five runs. Two ways to
+read it, both without a terminal:
+
+- **the page**, at `/run` of the review page's host (`https://ngvm-lab.example.org/run`): the same
+  sign-in and the same analyst groups as the alerts (`docs/sign-in.md`), and nothing more to deploy
+  when the tenant already has the review page and the chat. It shows the chain in the order it runs,
+  with the state of each step (running, done, partial, failed), its duration, what it wrote and the
+  pod to read its log in; then, for each pillar, the numbers worth watching — new CVEs over 24 hours
+  and those in KEV, alerts to review, assets and coverage, collectors late, decisions per level, what
+  the LLM cost, tickets by state; then the services that run beside the chain, with the shared
+  volume's filling. It refreshes itself every 30 seconds and holds no state of its own: the steps
+  come from the decision service, each number from the service that owns it.
+- **the chat**, `get_run_progress`: « où en est le run ? », « quelle étape a échoué ? », « le run de
+  ce matin est-il fini ? » (`docs/chat.md`).
+
+A step is never stopped by this: a push the decision service refuses prints a `WARN  progress:` line
+in the step's log and the step goes on. So a step missing from the page is not a step that failed —
+read its log. `daily.progress: false` in the tenant's values switches the records off; without a
+decision service (`verdict.enabled: false`) they stay on the working volume only.
+
+```bash
+kubectl -n ngvm-lab logs job/ngvm-lab-daily-manual-1101 -c collect | grep progress
+kubectl -n ngvm-lab port-forward deploy/ngvm-lab-tools 8080:8080
+```
+
+The second command gives the page at `http://127.0.0.1:8080/run` for a tenant without the review
+page; whoever reaches that port sees it, so the NetworkPolicy lets only oauth2-proxy and the chat
+reach it, as for the review page.
 
 ### What the LLM cost, and whether it is worth it (v0.23.7)
 

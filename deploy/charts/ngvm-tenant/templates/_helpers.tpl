@@ -303,6 +303,29 @@ name given twice breaks the next "helm upgrade" that changes the list. */}}
 {{- end }}
 {{- end -}}
 
+{{/* Where a step of the daily run is (v0.26.2): `ngvm_progress start|end <code>`, the common package in
+every pillar image. The record goes on the working volume, and to the decision service when there is
+one; it never stops the step (`|| true`), and nothing is pushed without the publish token. */}}
+{{- define "ngvm-tenant.progress" -}}
+{{- $root := .root -}}
+{{- if $root.Values.daily.progress }}
+ngvm_progress() {
+  python -m ngvm.progress "$1" --step {{ .name }} --code "${2:-0}" --dir /data/progress \
+    --run-file /data/.ngvm-run/started{{ if .output }} --output {{ .output }}{{ end }}{{ if $root.Values.verdict.enabled }} \
+    --url {{ include "ngvm-tenant.verdictUrl" $root | quote }} --tenant {{ $root.Values.tenant | quote }} \
+    --token-file /secrets/verdict-publish-token{{ end }} || true
+}
+{{- if $root.Values.verdict.enabled }}
+if [ ! -s /secrets/verdict-publish-token ]; then
+  ngvm_progress() { python -m ngvm.progress "$1" --step {{ .name }} --code "${2:-0}" --dir /data/progress \
+    --run-file /data/.ngvm-run/started{{ if .output }} --output {{ .output }}{{ end }} || true; }
+fi
+{{- end }}
+{{- else }}
+ngvm_progress() { :; }
+{{- end }}
+{{- end -}}
+
 {{/* Mounts shared by every step. */}}
 {{- define "ngvm-tenant.mounts" -}}
 - name: data
