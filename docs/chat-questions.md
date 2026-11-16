@@ -147,6 +147,12 @@ How to ask:
 
 - Quand a tourné le dernier run ?
 
+**`get_run_progress`**: where the daily run is: each step of the chain with its state, its duration and the pod to read its log in, then the numbers of the four pillars (the same thing the /run page shows).
+
+- Où en est le run de ce matin ?
+- Quelle étape du run a échoué ?
+- Le run est-il terminé ?
+
 **`get_platform_status`**: the version of each service and of the latest run, its LLM and cost, the next daily run, collectors late.
 
 - Quelle version d'NGVM tourne sur mon tenant ?

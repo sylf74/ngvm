@@ -37,6 +37,9 @@ questions:
   - {q: "Le run de ce matin est-il terminé, avec quel LLM, et combien a-t-il coûté ?", tool: get_platform_status, params: [], why: LLM}
   - {q: "Combien de temps verdict a-t-il tourné, et sur combien de findings ?", tool: get_platform_status, params: [], why: how long}
   - {q: "Tout est-il à jour ?", tool: get_platform_status, params: [], why: up to date}
+  - {q: "Où en est le run de ce matin ?", tool: get_run_progress, params: [], why: where is the run}
+  - {q: "Quelle étape du run a échoué ?", tool: get_run_progress, params: [], why: which step failed}
+  - {q: "Le run est-il terminé ?", tool: get_run_progress, params: [], why: is the run finished}
   - {q: "Quels collecteurs remontent des données ?", tool: list_collectors, params: [], why: collectors}
   - {q: "Quand le connecteur OpenVAS a-t-il remonté pour la dernière fois ?", tool: list_collectors, params: [source], why: last pushed}
   - {q: "Quelle version tourne sur le collecteur lan ?", tool: list_collectors, params: [collector], why: agent's version}

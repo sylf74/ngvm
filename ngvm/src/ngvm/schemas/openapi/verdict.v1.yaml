@@ -102,6 +102,59 @@ paths:
                         sla: {type: [object, "null"], additionalProperties: true}
         "401": {$ref: "#/components/responses/Problem"}
         "404": {$ref: "#/components/responses/Problem"}
+  /v1/tenants/{tenant}/progress:
+    post:
+      tags: [publish]
+      operationId: putProgress
+      summary: >-
+        Where one step of the daily run is (since v0.26.2): its state, when it started and ended, its
+        exit code and what it wrote. Pushed by `python -m ngvm.progress` at the start and at the end of
+        each step; the end record keeps what the start record said. The chains of the last five runs are kept
+      security:
+        - publishToken: []
+      parameters:
+        - $ref: "#/components/parameters/tenant"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ProgressStep"}
+      responses:
+        "202":
+          description: The run's chain as it now stands
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProgressRun"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "413": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+    get:
+      tags: [read]
+      operationId: getProgress
+      summary: Where the last daily runs got to, step by step (since v0.26.2), the run last written first
+      security:
+        - readToken: []
+      parameters:
+        - $ref: "#/components/parameters/tenant"
+        - name: limit
+          in: query
+          required: false
+          description: Runs returned, 1 to 5 (default 2)
+          schema: {type: integer, minimum: 1, maximum: 5, default: 2}
+      responses:
+        "200":
+          description: The chains (ngvm.progress_runs/1)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema, tenant, runs]
+                properties:
+                  schema: {const: ngvm.progress_runs/1}
+                  tenant: {type: string}
+                  runs: {type: array, items: {$ref: "#/components/schemas/ProgressRun"}}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
   /v1/tenants/{tenant}/summary:
     get:
       tags: [read]
@@ -466,6 +519,37 @@ components:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
   schemas:
+    ProgressStep:
+      type: object
+      required: [schema, run, step, state]
+      properties:
+        schema: {const: ngvm.progress/1}
+        run: {type: string, description: "The moment the run took the working volume (epoch second), the same for every step"}
+        run_started_at: {type: string}
+        step: {type: string, description: "collect, via, detect, assets, triage, inventory, publish, dispatch"}
+        order: {type: integer, minimum: 1, maximum: 99}
+        pillar: {enum: [watch, detection, triage, dispatch, other]}
+        state: {enum: [running, done, partial, failed]}
+        started_at: {type: string}
+        ended_at: {type: string}
+        seconds: {type: number}
+        code: {type: integer, description: "The step's exit code: 0 done, 3 partial, anything else failed"}
+        outputs:
+          type: object
+          description: What the step left on the working volume
+          properties:
+            files: {type: integer}
+            bytes: {type: integer}
+        version: {type: string}
+        pod: {type: string, description: "The run's pod: `kubectl logs <pod> -c <step>`"}
+    ProgressRun:
+      type: object
+      required: [run, steps]
+      properties:
+        run: {type: string}
+        run_started_at: {type: string}
+        updated_at: {type: string}
+        steps: {type: array, items: {$ref: "#/components/schemas/ProgressStep"}}
     RunReceipt:
       type: object
       required: [id, tenant, generated_at, received_at, digest, rows, counts]

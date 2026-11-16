@@ -4,6 +4,7 @@ the same interface as the files of `RunStore`, plus the life of each finding acr
 
   verdict.runs       one row per run received: its receipt and the triage document (gzip)
   verdict.push_keys  idempotency: key of the push -> run
+  verdict.progress   one row per step of the last daily runs: where the chain got to (v0.26.2)
   verdict.findings   one row per finding (CVE on asset) ever decided: opened, last seen, closed
                      (absent from a newer run: fixed or no longer detected), its level and the
                      changes of its level; since v0.21.0 its priority in the client's SLA (D19):
@@ -24,7 +25,7 @@ from typing import Any
 from ngvm.db import Database, Migration, rls
 
 from .index import row_id
-from .store import RID, RunReceipt, parse_time
+from .store import PROGRESS_KEEP, RID, RunReceipt, parse_time
 
 LEVELS_KEPT = 50  # changes of level kept per finding
 
@@ -86,6 +87,23 @@ ALTER TABLE verdict.findings ADD COLUMN unverified_since timestamptz;
 ALTER TABLE verdict.findings ADD COLUMN sla jsonb;
 ALTER TABLE verdict.findings ADD COLUMN priorities jsonb NOT NULL DEFAULT '[]';
 """,
+    ),
+    # v0.26.2: where each step of a daily run got to, one row per step of a run.
+    Migration(
+        4,
+        """
+CREATE TABLE verdict.progress (
+    tenant text NOT NULL,
+    run text NOT NULL,
+    step text NOT NULL,
+    step_order integer NOT NULL,
+    record jsonb NOT NULL,
+    updated_at timestamptz NOT NULL,
+    PRIMARY KEY (tenant, run, step)
+);
+CREATE INDEX progress_updated ON verdict.progress (tenant, updated_at);
+"""
+        + rls("verdict.progress"),
     ),
 ]
 
@@ -321,6 +339,58 @@ class PgRunStore:
                 "SELECT document FROM verdict.runs WHERE tenant = %s AND id = %s", (tenant, rid)
             ).fetchone()
         return json.loads(gzip.decompress(bytes(row[0]))) if row else None
+
+    # -- where the daily run is (v0.26.2) ----------------------------------------------------------
+    def put_progress(self, tenant: str, entry: dict[str, Any], now: dt.datetime | None = None) -> dict[str, Any]:
+        """One step's record into its run's chain; the chain as it now stands. The end record of a
+        step keeps what its start record said (the jsonb are merged)."""
+        now = now or dt.datetime.now(dt.UTC)
+        with self.db.tx(tenant) as conn:
+            conn.execute(
+                "INSERT INTO verdict.progress (tenant, run, step, step_order, record, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (tenant, run, step) DO UPDATE SET "
+                "record = verdict.progress.record || EXCLUDED.record, step_order = EXCLUDED.step_order, "
+                "updated_at = EXCLUDED.updated_at",
+                (tenant, entry["run"], entry["step"], int(entry.get("order", 99)), json.dumps(entry), now),
+            )
+            old = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT run FROM verdict.progress WHERE tenant = %s GROUP BY run "
+                    "ORDER BY max(updated_at) DESC, run DESC OFFSET %s",
+                    (tenant, PROGRESS_KEEP),
+                ).fetchall()
+            ]
+            if old:
+                conn.execute("DELETE FROM verdict.progress WHERE tenant = %s AND run = ANY(%s)", (tenant, old))
+            return self._chain(conn, tenant, entry["run"])
+
+    @staticmethod
+    def _chain(conn, tenant: str, run: str) -> dict[str, Any]:
+        rows = conn.execute(
+            "SELECT record, updated_at FROM verdict.progress WHERE tenant = %s AND run = %s ORDER BY step_order, step",
+            (tenant, run),
+        ).fetchall()
+        steps = [r[0] for r in rows]
+        return {
+            "run": run,
+            "run_started_at": next((s.get("run_started_at", "") for s in steps if s.get("run_started_at")), ""),
+            "updated_at": max((r[1] for r in rows), default=None).isoformat(timespec="seconds") if rows else "",
+            "steps": steps,
+        }
+
+    def progress(self, tenant: str, limit: int = 2) -> list[dict[str, Any]]:
+        """The chains kept, the run last written first."""
+        with self.db.tx(tenant) as conn:
+            runs = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT run FROM verdict.progress WHERE tenant = %s GROUP BY run "
+                    "ORDER BY max(updated_at) DESC, run DESC LIMIT %s",
+                    (tenant, max(1, limit)),
+                ).fetchall()
+            ]
+            return [self._chain(conn, tenant, run) for run in runs]
 
     # -- life of the findings ----------------------------------------------------------------------
     @staticmethod

@@ -98,8 +98,10 @@ verdict run /config/client.yaml --settings "$SETTINGS" --records /data/work/reco
 {{- end }}
 {{- end -}}
 
+{{/* The last step of the chain releases the working volume whether it succeeded or not; it reports
+where it got to first (v0.26.2), since the trap replaces the container's own. */}}
 {{- define "ngvm-tenant.release" -}}
-trap 'if [ "$(cat /data/.ngvm-run/pod 2>/dev/null)" = "$HOSTNAME" ]; then rm -rf /data/.ngvm-run; fi' EXIT
+trap 'rc=$?; ngvm_progress end "$rc"; ngvm_release' EXIT
 {{- end -}}
 
 {{- define "ngvm-tenant.step.publish" -}}
@@ -186,7 +188,10 @@ if [ "$rc" -ne 0 ]; then echo "WARN watch service not updated (exit $rc): see ab
   args:
     - |
       echo "NGVM {{ $root.Chart.AppVersion }}, tenant {{ $root.Values.tenant }}, step {{ .name }}"
-      trap 'rc=$?; if [ "$rc" -ne 0 ] && [ "$(cat /data/.ngvm-run/pod 2>/dev/null)" = "$HOSTNAME" ]; then rm -rf /data/.ngvm-run; fi' EXIT
+      ngvm_release() { if [ "$(cat /data/.ngvm-run/pod 2>/dev/null)" = "$HOSTNAME" ]; then rm -rf /data/.ngvm-run; fi; }
+      {{- include "ngvm-tenant.progress" (dict "root" $root "name" .name "output" .output) | nindent 6 }}
+      trap 'rc=$?; ngvm_progress end "$rc"; if [ "$rc" -ne 0 ]; then ngvm_release; fi' EXIT
+      ngvm_progress start 0
       {{- include (printf "ngvm-tenant.step.%s" .name) $root | nindent 6 }}
   env:
     {{- include "ngvm-tenant.env" $root | nindent 4 }}
@@ -253,11 +258,11 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           initContainers:
-            {{- include "ngvm-tenant.container" (dict "root" . "name" "collect" "pillar" "detect") | nindent 12 }}
-            {{- include "ngvm-tenant.container" (dict "root" . "name" "via" "pillar" "via") | nindent 12 }}
-            {{- include "ngvm-tenant.container" (dict "root" . "name" "detect" "pillar" "detect") | nindent 12 }}
-            {{- include "ngvm-tenant.container" (dict "root" . "name" "assets" "pillar" "verdict") | nindent 12 }}
-            {{- include "ngvm-tenant.container" (dict "root" . "name" "triage" "pillar" "verdict") | nindent 12 }}
+            {{- include "ngvm-tenant.container" (dict "root" . "name" "collect" "pillar" "detect" "output" "/data/work/detect") | nindent 12 }}
+            {{- include "ngvm-tenant.container" (dict "root" . "name" "via" "pillar" "via" "output" "/data/work/records.json") | nindent 12 }}
+            {{- include "ngvm-tenant.container" (dict "root" . "name" "detect" "pillar" "detect" "output" "/data/work/detect") | nindent 12 }}
+            {{- include "ngvm-tenant.container" (dict "root" . "name" "assets" "pillar" "verdict" "output" "/data/work/assets") | nindent 12 }}
+            {{- include "ngvm-tenant.container" (dict "root" . "name" "triage" "pillar" "verdict" "output" "/data/output") | nindent 12 }}
             {{- if .Values.watch.enabled }}
             {{- include "ngvm-tenant.container" (dict "root" . "name" "inventory" "pillar" "via") | nindent 12 }}
             {{- end }}

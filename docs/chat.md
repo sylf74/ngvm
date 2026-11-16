@@ -155,6 +155,7 @@ kubectl -n $NS logs deploy/ngvm-lab-chat -c retention --tail=5
 | "Quels collecteurs ?", "quand OpenVAS a-t-il remonté ?", "quelle version sur le collecteur ?" (v0.23.9) | `list_collectors`: each collector and source, its last push, the age of its data, late or refused, the connector and the agent's version (needs `intake.enabled`); since v0.23.10 the next and last run of each connector |
 | "Lance une synchro CMDB" (v0.23.10) | `request_connector_run`: a request a validator confirms on the review page (« Actions »), run by the collector at its next poll; `list_actions` tells when it is done (needs the tenant's database, LLD triage §16.10) |
 | "Qui a lancé la synchro ?", "qui a validé l'alerte 42 ?" (v0.23.10) | `get_audit`: the audit journal, with who did what, when, through which service |
+| "Où en est le run ?", "quelle étape a échoué ?", "le run de ce matin est-il fini ?" (v0.26.2) | `get_run_progress`: each step of the daily chain with its state, its duration and the pod to read its log in, then the numbers of the four pillars. The same thing to look at, as a page: `/run` of the review page (`docs/operations.md` §2) |
 
 The questions the chat must answer, with the tool of each, are in `tests/chat-questions.yaml` (v0.23.4):
 a test checks them against the tools' description; replay them in Open WebUI after an upgrade. When

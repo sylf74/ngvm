@@ -3,7 +3,8 @@
 
 Plain HTTP inside the cluster, one service per tenant namespace; every call names the tenant and
 the service refuses another one. Roles: `publish` (the daily run pushes its triage, and reads the
-SLA state it carries, v0.21.0) and `read` (analysts' tools). Acceptance of a push, in order, nothing stored on failure:
+SLA state it carries, v0.21.0, and says where each step of the run is, v0.26.2) and `read`
+(analysts' tools and the supervision page). Acceptance of a push, in order, nothing stored on failure:
   1. publish token, Idempotency-Key; a retry is answered from the key at once      401 / 400
   2. size limit, gzip (one complete stream), JSON, ngvm.triage/1                     413 / 400 / 422
   3. client id = tenant, generated_at not in the future                             422
@@ -22,7 +23,7 @@ from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from ngvm import __version__
+from ngvm import __version__, progress
 from ngvm.io import ExchangeError, validate_triage
 from ngvm.service import JsonHandler, Problem, TokenSet, release_memory
 from ngvm.service import serve as _serve
@@ -35,6 +36,14 @@ ROLES = {"publish", "read"}
 FUTURE_TOLERANCE = dt.timedelta(minutes=10)
 ROUTE = re.compile(r"^/v1/tenants/(?P<tenant>[a-z0-9][a-z0-9-]{0,62})/(?P<rest>.*)$")
 RUN_ID = re.compile(r"^(latest|[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12})$")
+PROGRESS_MAX = 8 * 1024  # bytes of a step's record: a few hundred are enough
+PROGRESS_RUNS = 5  # chains a read can ask for at most
+# What a step's record may carry (v0.26.2), and the type of each: anything else is dropped, so the
+# publish token cannot grow the service's store.
+PROGRESS_FIELDS: dict[str, type | tuple[type, ...]] = {
+    "run_started_at": str, "pillar": str, "version": str, "pod": str, "started_at": str,
+    "ended_at": str, "seconds": (int, float), "code": int, "outputs": dict,
+}  # fmt: skip
 
 
 class Service:
@@ -138,6 +147,58 @@ class Service:
             "generated_at": now.isoformat(timespec="seconds"),
             "findings": self.store.sla_state(tenant),
         }
+
+    # -- where the daily run is (v0.26.2) -----------------------------------------------------
+    def put_progress(self, tenant: str, token: str | None, body: bytes) -> dict[str, Any]:
+        """A step of the daily run says where it is (`python -m ngvm.progress`, publish token). The
+        record is taken field by field: a step pushes its own state, nothing else."""
+        self._check_tenant(tenant)
+        self.tokens.require(token, "publish")
+        if len(body) > PROGRESS_MAX:
+            raise Problem(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"a record is at most {PROGRESS_MAX} bytes")
+        try:
+            data = json.loads(body)
+        except ValueError as exc:
+            raise Problem(HTTPStatus.BAD_REQUEST, "body is not JSON") from exc
+        if not isinstance(data, dict) or data.get("schema") != progress.SCHEMA:
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, f"schema {progress.SCHEMA} expected")
+        run, step, state = str(data.get("run", "")), str(data.get("step", "")), str(data.get("state", ""))
+        if not progress.RUN_ID.match(run):
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "run: letters, digits, dot, dash or underscore")
+        if not progress.STEP_NAME.match(step):
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "step: a step name of the daily run")
+        if state not in progress.STATES:
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, f"state: one of {', '.join(progress.STATES)}")
+        try:
+            order = int(data.get("order", 99))
+        except (TypeError, ValueError) as exc:
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "order: a number") from exc
+        entry: dict[str, Any] = {
+            "schema": progress.SCHEMA, "tenant": tenant, "run": run, "step": step, "state": state,
+            "order": min(max(order, 1), 99),
+        }  # fmt: skip
+        for name, kind in PROGRESS_FIELDS.items():
+            value = data.get(name)
+            if isinstance(value, kind) and not isinstance(value, bool):
+                entry[name] = value[:120] if isinstance(value, str) else value
+        if isinstance(entry.get("outputs"), dict):  # files and bytes of what the step wrote
+            entry["outputs"] = {
+                k: v for k, v in entry["outputs"].items() if k in ("files", "bytes", "truncated") and isinstance(v, int)
+            }
+        log.info("progress tenant=%s run=%s step=%s state=%s", tenant, run, step, state)
+        return self.store.put_progress(tenant, entry)
+
+    def progress(self, tenant: str, token: str | None, query: dict[str, str]) -> dict[str, Any]:
+        """The chains of the last daily runs, the one last written first (read token)."""
+        self._reader(tenant, token)
+        try:
+            limit = int(query.get("limit") or 2)
+        except ValueError as exc:
+            raise Problem(HTTPStatus.BAD_REQUEST, f"limit: 1 to {PROGRESS_RUNS}") from exc
+        if not 1 <= limit <= PROGRESS_RUNS:
+            raise Problem(HTTPStatus.BAD_REQUEST, f"limit: 1 to {PROGRESS_RUNS}")
+        runs = self.store.progress(tenant, limit)
+        return {"schema": "ngvm.progress_runs/1", "tenant": tenant, "runs": runs}
 
     # -- read ---------------------------------------------------------------------------------
     def _reader(self, tenant: str, token: str | None) -> None:
@@ -306,6 +367,9 @@ def make_handler(service: Service) -> type[JsonHandler]:
                 if rest == "sla-state":
                     self.send_json(HTTPStatus.OK, service.sla_state(tenant, self.bearer()))
                     return
+                if rest == "progress":  # v0.26.2: where the daily run is, step by step
+                    self.send_json(HTTPStatus.OK, service.progress(tenant, self.bearer(), query))
+                    return
                 self.send_json(HTTPStatus.OK, service.read(tenant, self.bearer(), rest, query))
             except Problem as p:
                 self.send_problem(p)
@@ -316,6 +380,10 @@ def make_handler(service: Service) -> type[JsonHandler]:
         def do_POST(self) -> None:  # noqa: N802 - http.server API
             try:
                 tenant, rest, _ = self._route()
+                if rest == "progress":  # v0.26.2: a step of the daily run says where it is
+                    chain = service.put_progress(tenant, self.bearer(), self.read_body(PROGRESS_MAX))
+                    self.send_json(HTTPStatus.ACCEPTED, chain)
+                    return
                 if rest != "runs":
                     raise Problem(HTTPStatus.NOT_FOUND, "no such route")
                 body = self.read_body(service.max_bytes)

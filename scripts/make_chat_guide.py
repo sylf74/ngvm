@@ -62,6 +62,8 @@ THEMES = [
     }),
     ("The platform itself", {
         "list_runs": "the daily runs kept, with their date and counts",
+        "get_run_progress": "where the daily run is: each step of the chain with its state, its duration and the "
+        "pod to read its log in, then the numbers of the four pillars (the same thing the /run page shows)",
         "get_platform_status": "the version of each service and of the latest run, its LLM and cost, the next "
         "daily run, collectors late",
         "list_collectors": "each collector and source: last push, age, late or refused, connector, agent's version, "
