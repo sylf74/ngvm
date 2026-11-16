@@ -129,6 +129,20 @@ paths:
           required: false
           description: Nodes kept for drawing, heaviest first
           schema: {type: integer, minimum: 1, maximum: 400, default: 60}
+        - name: node
+          in: query
+          required: false
+          description: >-
+            Since v0.27.2: a node of the graph. The answer then carries that node as focus, the
+            neighbourhood within depth hops of it instead of the whole graph, and behind, the assets
+            whose path goes through it. A node the run did not observe comes back as focus_unknown
+            with the whole graph: a node is named by the run that saw it
+          schema: {type: string}
+        - name: depth
+          in: query
+          required: false
+          description: Hops drawn around node, both ways (ignored without node)
+          schema: {type: integer, minimum: 1, maximum: 3, default: 2}
         - $ref: "#/components/parameters/run"
       responses:
         "200":
@@ -570,6 +584,27 @@ components:
         nodes_total: {type: integer}
         edges_total: {type: integer}
         truncated: {type: boolean, description: "Nodes were left out of nodes/edges, the lightest first"}
+        depth: {type: integer, description: "Since v0.27.2, with node: the hops drawn around it"}
+        focus:
+          allOf:
+            - $ref: "#/components/schemas/GraphNode"
+          description: "Since v0.27.2, with node: the node asked for; nodes/edges are then its neighbourhood"
+        focus_unknown: {type: string, description: "Since v0.27.2: the node asked for is on no observed path of this run"}
+        behind:
+          type: object
+          description: "Since v0.27.2, with node: the assets whose path goes through it, the heaviest first"
+          properties:
+            assets:
+              type: array
+              items:
+                type: object
+                required: [id, name]
+                properties:
+                  id: {type: string}
+                  name: {type: string}
+                  findings: {type: integer}
+            assets_total: {type: integer}
+            findings: {type: integer}
         chokepoints:
           type: array
           description: The nodes the paths go through, the heaviest first; never the asset itself or the internet
@@ -601,6 +636,7 @@ components:
         assets: {type: integer}
         findings: {type: integer}
         examples: {type: array, items: {type: string}, description: "Some of the assets behind it, by name"}
+        distance: {type: integer, description: "Since v0.27.2, in a neighbourhood: hops from the node in focus"}
     ProgressStep:
       type: object
       required: [schema, run, step, state]

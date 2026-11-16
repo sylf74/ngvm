@@ -1,4 +1,4 @@
-# Operator's manual (v0.27.1)
+# Operator's manual (v0.27.2)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -166,6 +166,26 @@ mind when reading it:
   is safe: scan those assets or declare their flows.
 
 In the chat, `list_chokepoints` answers « par quoi commencer ? » with the same ranking.
+
+### Following a way in, node by node (v0.27.2)
+
+A client of a few hundred assets has a graph no page can draw whole: only the heaviest sixty nodes
+are drawn, and the rest is counted. So the reading starts from the ranking rather than from the
+picture: click the label of a chokepoint, or any box of the drawing, and the page comes back centred
+on that node — what is within two hops of it either way, drawn whole, and the assets whose path goes
+through it, named with the findings each carries. `?depth=1` tightens the view, `?depth=3` widens it;
+an asset's box leads to its own path as before.
+
+It is a link, not a script: the page is rendered by the server and the Content-Security-Policy of
+the review page is unchanged.
+
+Two things worth knowing:
+
+- a node is named by the run that saw it, so a link kept from an earlier run may name a node this
+  run no longer observes. The page says so (« node not in the latest run ») rather than drawing an
+  empty graph: go back to the whole picture and start again from the ranking;
+- the assets listed behind a node are those carrying a finding at the level being read. A node whose
+  list is empty at ACT may well carry ATTEND findings: `?level=ATTEND` on the whole picture first.
 
 ### What the LLM cost, and whether it is worth it (v0.23.7)
 

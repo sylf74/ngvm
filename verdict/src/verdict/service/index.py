@@ -583,11 +583,16 @@ class RunIndex:
         try:
             top = int(query.get("top") or 40)
             max_nodes = int(query.get("max_nodes") or 60)
+            depth = int(query.get("depth") or 2)
         except ValueError as exc:
-            raise QueryError("top and max_nodes: numbers") from exc
+            raise QueryError("top, max_nodes and depth: numbers") from exc
         if not 1 <= top <= 200 or not 1 <= max_nodes <= 400:
             raise QueryError("top: 1 to 200, max_nodes: 1 to 400")
-        out = chokepoints.analyse(list(self.inventory.values()), self.by_asset, level, top, max_nodes)
+        if not 1 <= depth <= chokepoints.DEPTH_MAX:
+            raise QueryError(f"depth: 1 to {chokepoints.DEPTH_MAX}")
+        # v0.27.2: with a node, the neighbourhood of that node instead of the whole graph.
+        node = (query.get("node") or "").strip()
+        out = chokepoints.analyse(list(self.inventory.values()), self.by_asset, level, top, max_nodes, node, depth)
         return {"run": self.run, **out}
 
     def fix_plan(self, asset: str, query: dict[str, str]) -> dict[str, Any] | None:

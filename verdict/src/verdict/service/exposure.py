@@ -79,7 +79,7 @@ def _layout(nodes: list[dict[str, Any]]) -> tuple[dict[str, tuple[int, int]], li
     return at, columns, MARGIN_TOP + max(rows, 1) * GAP_Y
 
 
-def _svg(graph: dict[str, Any]) -> str:
+def _svg(graph: dict[str, Any], focus: str = "") -> str:
     """The paths that lead to the findings that matter, drawn: the way in on the left, the assets on
     the right, a link as thick as what sits behind it. An SVG written here, no script, no image."""
     nodes = graph.get("nodes") or []
@@ -117,18 +117,27 @@ def _svg(graph: dict[str, Any]) -> str:
             continue
         x, y = spot
         kind = str(node.get("kind", ""))
-        label = str(node.get("label") or node.get("node", ""))
+        ident = str(node.get("node", ""))
+        label = str(node.get("label") or ident)
         counts = f"{node.get('findings', 0)} findings · {node.get('assets', 0)} asset(s)"
         fill, stroke = COLOURS.get(kind, PLAIN)
+        here = ident == focus
         box = (
             f"<g><title>{esc(label)} — {esc(counts)}</title>"
             f"<rect x='{x}' y='{y}' width='{BOX_W}' height='{BOX_H}' rx='2' fill='{fill}' stroke='{stroke}' "
-            f"stroke-width='1' class='n-{esc(kind)}'/>"
+            f"stroke-width='{3 if here else 1}' class='n-{esc(kind)}'/>"
             f"<text x='{x + 8}' y='{y + 18}' font-size='13' fill='{INK}'>{esc(_short(label))}</text>"
             f"<text x='{x + 8}' y='{y + 34}' font-size='11' fill='{FADED}'>{esc(counts)}</text></g>"
         )
-        if kind in ("host", "image"):
-            box = f"<a href='/exposure?asset={quote(str(node.get('node')), safe='')}'>{box}</a>"
+        # Navigation by vertex (v0.27.2): a link, not a script, so the page's CSP stays as it is —
+        # an asset leads to its own page, anything else to the neighbourhood centred on it.
+        if not here:
+            where = (
+                f"/exposure?asset={quote(ident, safe='')}"
+                if kind in ("host", "image")
+                else f"/exposure?node={quote(ident, safe='')}"
+            )
+            box = f"<a href='{where}'>{box}</a>"
         boxes.append(box)
     titles = "".join(
         f"<text x='{i * COL_W}' y='16' font-size='11' fill='{FADED}'>{esc(title)}</text>"
@@ -160,8 +169,12 @@ def _chokepoints(graph: dict[str, Any]) -> str:
         examples = node.get("examples") or []
         named = ", ".join(esc(name) for name in examples[:6])
         rest = node.get("assets", 0) - len(examples[:6])
+        # The table is the way into the drawing (v0.27.2): the heaviest node first, one click to what
+        # is behind it. On a client of a few hundred assets no whole graph is readable, so the reading
+        # starts here rather than by looking for a box.
+        where = f"/exposure?node={quote(str(node.get('node', '')), safe='')}"
         rows.append(
-            f"<tr><td>{esc(node.get('label'))}</td><td>{esc(node.get('kind'))}</td>"
+            f"<tr><td><a href='{where}'>{esc(node.get('label'))}</a></td><td>{esc(node.get('kind'))}</td>"
             f"<td>{warn(node.get('findings', 0))}</td><td>{esc(node.get('assets', 0))}</td>"
             f"<td class='note'>{named}{f' and {rest} more' if rest > 0 else ''}</td></tr>"
         )
@@ -209,6 +222,77 @@ def _graph_block(graph: dict[str, Any]) -> str:
         )
         + "</div>"
     )
+
+
+def _behind(graph: dict[str, Any]) -> str:
+    """The assets whose path goes through the node in focus, the heaviest first."""
+    found = graph.get("behind") or {}
+    rows = "".join(
+        f"<tr><td><a href='/exposure?asset={quote(str(a.get('id', '')), safe='')}'>"
+        f"{esc(a.get('name') or a.get('id'))}</a></td><td>{warn(a.get('findings', 0))}</td></tr>"
+        for a in found.get("assets") or []
+    )
+    if not rows:
+        return "<p class='note'>No asset at this level passes through this node in the latest run.</p>"
+    shown, total = len(found.get("assets") or []), found.get("assets_total", 0)
+    note = f"<p class='note'>{shown} of {total} shown, the heaviest first.</p>" if total > shown else ""
+    return f"<table class='list'><tr><th>Asset</th><th>Findings behind this node</th></tr>{rows}</table>{note}"
+
+
+def _node_page(graph: dict[str, Any], tenant: str, depth: int) -> tuple[str, str, str]:
+    """The page centred on one node: its neighbourhood, and the assets behind it.
+
+    The whole graph of a client of a few hundred assets fits in no page, and zooming into a drawing
+    nobody can read does not help: this page draws the node asked for and what is within `depth` hops
+    of it, both ways, and says how much of the graph it left out (v0.27.2).
+    """
+    focus = graph.get("focus") or {}
+    ident = str(focus.get("node", ""))
+    label = str(focus.get("label") or ident)
+    kind = str(focus.get("kind", ""))
+    level = esc(graph.get("level", "ACT"))
+    behind = graph.get("behind") or {}
+    hops = int(graph.get("depth", depth) or depth)
+    head = (
+        f"<b>Exposure — {esc(label)}</b>"
+        f"<span>{esc(KINDS.get(kind, kind))} · {hops} hop(s) around it · {level} findings"
+        " · <a href='/exposure'>the whole picture</a> · <a href='/run'>the run</a></span>"
+    )
+    facts = kpi(
+        [
+            ("What it is", esc(KINDS.get(kind, kind))),
+            (f"{level} findings behind it", warn(focus.get("findings", 0))),
+            ("Assets behind it", behind.get("assets_total", focus.get("assets", 0))),
+            ("Nodes drawn", f"{len(graph.get('nodes') or [])} of {graph.get('nodes_total', 0)}"),
+            ("Node", Safe(f"<code>{esc(ident)}</code>")),
+        ]
+    )
+    reach = " · ".join(f"<a href='/exposure?node={quote(ident, safe='')}&amp;depth={d}'>{d}</a>" for d in (1, 2, 3))
+    drawn = _svg(graph, ident)
+    picture = (
+        f"<div class='drawing'>{Safe(drawn)}</div>"
+        if drawn
+        else "<p class='note'>Nothing to draw around this node.</p>"
+    )
+    body = (
+        f"<h2>Around this node</h2>"
+        f"<p class='note'>Hops drawn: {Safe(reach)} · a box leads to its own neighbourhood, an asset to its page</p>"
+        f"{picture}"
+        "<div class='cards'>"
+        + card("What it carries", "", facts)
+        + card(
+            "The assets behind it",
+            f"their {level} findings would be out of reach if this node were closed",
+            _behind(graph),
+            "2 1 520px",
+        )
+        + "</div>"
+    )
+    footer = Safe(
+        "What is drawn is what the run observed, not every way in: a client with two paths to the same "
+        "asset sees both, and nothing here says a path is the only one"
+    )
+    return head, body, footer
 
 
 def _hop(step: dict[str, Any]) -> str:
@@ -362,6 +446,33 @@ def page(data: dict[str, Any]) -> str:
             "It may have been scanned under another name, or not scanned at all.</p>"
         )
         return shell(f"Exposure — {tenant}", head, body)
+    if data.get("node"):  # v0.27.2: the neighbourhood of one node
+        graph = data.get("graph") or {}
+        asked = str(data["node"])
+        if graph.get("state") or not graph:
+            head = (
+                f"<b>Exposure — {esc(tenant)}</b><span>the decision service did not answer"
+                " · <a href='/exposure'>all the assets</a></span>"
+            )
+            body = (
+                f"<p class='note'>The graph could not be read: {esc(graph.get('state', 'no answer'))}. "
+                "The paths themselves are on each asset's page.</p>"
+            )
+            return shell(f"Exposure — {tenant}", head, body)
+        if graph.get("focus_unknown") or not graph.get("focus"):
+            head = (
+                f"<b>Exposure — {esc(tenant)}</b><span>node not in the latest run"
+                " · <a href='/exposure'>the whole picture</a></span>"
+            )
+            body = (
+                f"<p class='note'>No observed path of the latest run goes through "
+                f"<code>{esc(asked)}</code>. A node is named by the run that saw it, so a link kept from "
+                "an earlier run may point at something this one no longer observes — or the level asked "
+                "for has no finding behind it.</p>"
+            )
+            return shell(f"Exposure — {tenant}", head, body)
+        head, body, footer = _node_page(graph, tenant, int(data.get("depth") or 2))
+        return shell(f"Exposure — {graph['focus'].get('label') or asked}", head, body, footer)
     if detail:
         head, body, footer = _asset_page(detail, tenant, data.get("exposure_gaps") or [])
         title = f"Exposure — {detail.get('name') or detail.get('asset', '')}"
