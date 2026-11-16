@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ngvm import sla
 
+from . import chokepoints
+
 LEVELS = ("ACT", "ATTEND", "TRACK")
 EXPOSURES = ("open", "controlled", "small")
 TITLE_MAX = 140
@@ -571,6 +573,22 @@ class RunIndex:
             "assumed": source == "assumed",
             "services": list(known.get("services") or [])[:50],
         }
+
+    def exposure_graph(self, query: dict[str, str]) -> dict[str, Any]:
+        """Where the paths to the assets that matter meet (v0.27.0): the chokepoints of the run and
+        the graph they are on, computed from the paths the run already kept (`chokepoints.py`)."""
+        level = (query.get("level") or "ACT").upper()
+        if level not in chokepoints.LEVELS:
+            raise QueryError(f"level: one of {', '.join(chokepoints.LEVELS)}")
+        try:
+            top = int(query.get("top") or 40)
+            max_nodes = int(query.get("max_nodes") or 60)
+        except ValueError as exc:
+            raise QueryError("top and max_nodes: numbers") from exc
+        if not 1 <= top <= 200 or not 1 <= max_nodes <= 400:
+            raise QueryError("top: 1 to 200, max_nodes: 1 to 400")
+        out = chokepoints.analyse(list(self.inventory.values()), self.by_asset, level, top, max_nodes)
+        return {"run": self.run, **out}
 
     def fix_plan(self, asset: str, query: dict[str, str]) -> dict[str, Any] | None:
         """The decisions of one asset grouped by the fix that clears them, the fix that clears most

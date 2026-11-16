@@ -447,6 +447,28 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
         "platform",
     ),
     (
+        "/chokepoints",
+        "list_chokepoints",
+        "Where the ways in to the assets that matter meet (v0.27.0): the nodes every observed path goes "
+        "through — a zone, a published endpoint, a port that answers — ranked by the findings behind them, "
+        "with the assets each one leads to. Use it for 'what should we close first', 'which proxy carries the "
+        "most exposure', 'where to act to cut the most ACT findings', 'what do our exposed assets have in "
+        "common'. It never says a path is the only way in: it counts what the run observed. An asset whose "
+        "exposure is assumed has no path and is counted apart (assets_without_path). get_exposure_path "
+        "answers for one asset instead.",
+        [
+            _q(
+                "level",
+                "string",
+                "The decisions that make an asset worth a path (default ACT)",
+                enum=["ACT", "ATTEND", "TRACK"],
+            ),
+            _q("top", "integer", "Chokepoints returned, 1 to 200 (default 40)"),
+            _RUN,
+        ],  # fmt: skip
+        "exposure-graph",
+    ),
+    (
         "/run-progress",
         "get_run_progress",
         "Where the tenant's daily run is (v0.26.2): each step of the chain in the order it runs "
@@ -1253,7 +1275,7 @@ class Tools:
         return fit(copy.deepcopy(self._progress_data()), self.max_chars)
 
     # -- why an asset is exposed as it is (v0.26.3) ---------------------------------------------
-    def _exposure_data(self, asset: str = "", exposure: str = "", limit: int = 200) -> dict[str, Any]:
+    def _exposure_data(self, asset: str = "", exposure: str = "", level: str = "", limit: int = 200) -> dict[str, Any]:
         """One asset's path and its proof, or the assets of the run, most ACT first. The decision
         service holds the run: nothing here is computed, and no exposure is guessed."""
         out: dict[str, Any] = {"tenant": self.tenant, "exposure": exposure}
@@ -1273,15 +1295,20 @@ class Tools:
         answer = self._get("assets", query)
         out["assets"] = answer.get("items") or []
         out["total"] = answer.get("total", len(out["assets"]))
+        try:  # v0.27.0: a bonus block. A decision service that does not serve it (an older one, or
+            out["graph"] = self._get("exposure-graph", {"level": level} if level else {})
+        except Problem as problem:  # one that answers an error) must not take the list of assets down.
+            out["graph"] = {"state": problem.detail}
         return out
 
     def exposure_page(self, actor: str = "", query: dict[str, str] | None = None) -> str:
         """The exposure page (v0.26.3), beside the run page and behind the same sign-in."""
         query = query or {}
         asset, exposure = (query.get("asset") or "")[:200], (query.get("exposure") or "")[:20]
+        level = (query.get("level") or "")[:10].upper()
         who = actor or "analyst (not forwarded)"
         self.audit.write(self.tenant, who, "user" if actor else "token", "page:exposure", "/exposure", dict(query))
-        return exposure_page.page(self._exposure_data(asset, exposure))
+        return exposure_page.page(self._exposure_data(asset, exposure, level))
 
     def page(self, actor: str = "") -> str:
         """The supervision page (v0.26.2), for the analysts behind the review page's sign-in; who

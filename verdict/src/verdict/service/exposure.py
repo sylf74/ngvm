@@ -42,23 +42,181 @@ WHY = {
 }
 
 
-def _hop(step: dict[str, Any], last: bool) -> str:
-    """One step of the path, and the link to the next: what was crossed, who saw it, when."""
+COLUMN_TITLES = ("The way in", "Zones", "What answers", "Assets")
+BOX_W, BOX_H, GAP_Y, COL_W, PER_COLUMN = 196, 44, 56, 244, 8
+MARGIN_TOP = 34
+
+
+def _short(text: str, keep: int = 26) -> str:
+    return text if len(text) <= keep else text[: keep - 1] + "…"
+
+
+def _layout(nodes: list[dict[str, Any]]) -> tuple[dict[str, tuple[int, int]], list[list[dict[str, Any]]], int]:
+    """Where each node is drawn: its column, then the heaviest first inside the column."""
+    columns: list[list[dict[str, Any]]] = [[], [], [], []]
+    for node in sorted(nodes, key=lambda n: (-n.get("findings", 0), -n.get("assets", 0), n.get("node", ""))):
+        column = node.get("column", 3)
+        if isinstance(column, int) and 0 <= column <= 3:
+            columns[column].append(node)
+    at: dict[str, tuple[int, int]] = {}
+    for index, column in enumerate(columns):
+        for row, node in enumerate(column[:PER_COLUMN]):
+            at[str(node.get("node"))] = (index * COL_W, MARGIN_TOP + row * GAP_Y)
+    rows = max((len(c[:PER_COLUMN]) for c in columns), default=0)
+    return at, columns, MARGIN_TOP + max(rows, 1) * GAP_Y
+
+
+def _svg(graph: dict[str, Any]) -> str:
+    """The paths that lead to the findings that matter, drawn: the way in on the left, the assets on
+    the right, a link as thick as what sits behind it. An SVG written here, no script, no image."""
+    nodes = graph.get("nodes") or []
+    if not nodes:
+        return ""
+    at, columns, height = _layout(nodes)
+    heaviest = max((e.get("findings", 0) for e in graph.get("edges") or []), default=1) or 1
+    links = []
+    for edge in graph.get("edges") or []:
+        start, end = at.get(str(edge.get("source"))), at.get(str(edge.get("target")))
+        if not start or not end:
+            continue
+        x1, y1 = start[0] + BOX_W, start[1] + BOX_H // 2
+        x2, y2 = end[0], end[1] + BOX_H // 2
+        width = 1 + 4 * (edge.get("findings", 0) / heaviest)
+        told = " · ".join(
+            str(part)
+            for part in (
+                edge.get("via"),
+                f"{edge.get('findings', 0)} findings on {edge.get('assets', 0)} asset(s)",
+                edge.get("evidence"),
+                (edge.get("seen") or "")[:10],
+            )
+            if part
+        )
+        links.append(
+            f"<path d='M{x1},{y1} C{x1 + COL_W // 3},{y1} {x2 - COL_W // 3},{y2} {x2},{y2}' fill='none' "
+            f"stroke='#9aa5b1' stroke-width='{width:.1f}' stroke-opacity='0.55'>"
+            f"<title>{esc(told)}</title></path>"
+        )
+    boxes = []
+    for node in nodes:
+        spot = at.get(str(node.get("node")))
+        if not spot:
+            continue
+        x, y = spot
+        kind = str(node.get("kind", ""))
+        label = str(node.get("label") or node.get("node", ""))
+        counts = f"{node.get('findings', 0)} findings · {node.get('assets', 0)} asset(s)"
+        box = (
+            f"<g><title>{esc(label)} — {esc(counts)}</title>"
+            f"<rect x='{x}' y='{y}' width='{BOX_W}' height='{BOX_H}' rx='2' class='n-{esc(kind)}'/>"
+            f"<text x='{x + 8}' y='{y + 18}' class='t'>{esc(_short(label))}</text>"
+            f"<text x='{x + 8}' y='{y + 34}' class='s'>{esc(counts)}</text></g>"
+        )
+        if kind in ("host", "image"):
+            box = f"<a href='/exposure?asset={quote(str(node.get('node')), safe='')}'>{box}</a>"
+        boxes.append(box)
+    titles = "".join(
+        f"<text x='{i * COL_W}' y='16' class='h'>{esc(title)}</text>"
+        for i, title in enumerate(COLUMN_TITLES)
+        if columns[i]
+    )
+    more = "".join(
+        f"<text x='{i * COL_W}' y='{height - 14}' class='s'>+{len(column) - PER_COLUMN} more</text>"
+        for i, column in enumerate(columns)
+        if len(column) > PER_COLUMN
+    )
+    width = 3 * COL_W + BOX_W
+    return (
+        f"<svg viewBox='0 0 {width} {height}' width='100%' height='{height}' role='img' "
+        f"xmlns='http://www.w3.org/2000/svg' class='graph'>{titles}{''.join(links)}{''.join(boxes)}{more}</svg>"
+    )
+
+
+def _chokepoints(graph: dict[str, Any]) -> str:
+    """The ranking under the drawing: what to close, and what it would take out of the client's way."""
+    items = graph.get("chokepoints") or []
+    if not items:
+        return (
+            "<p class='note'>No path leads to a finding at this level in the latest run: either nothing is "
+            "decided ACT, or the exposures rest on assumptions rather than on observed paths.</p>"
+        )
+    rows = []
+    for node in items:
+        examples = node.get("examples") or []
+        named = ", ".join(esc(name) for name in examples[:6])
+        rest = node.get("assets", 0) - len(examples[:6])
+        rows.append(
+            f"<tr><td>{esc(node.get('label'))}</td><td>{esc(node.get('kind'))}</td>"
+            f"<td>{warn(node.get('findings', 0))}</td><td>{esc(node.get('assets', 0))}</td>"
+            f"<td class='note'>{named}{f' and {rest} more' if rest > 0 else ''}</td></tr>"
+        )
+    kept = len(items)
+    total = graph.get("chokepoints_total", kept)
+    note = f"<p class='note'>{kept} of {total} shown, the heaviest first.</p>" if total > kept else ""
+    return (
+        "<table class='list'><tr><th>Chokepoint</th><th>What it is</th><th>Findings behind</th>"
+        f"<th>Assets</th><th>Some of them</th></tr>{''.join(rows)}</table>{note}"
+    )
+
+
+def _graph_block(graph: dict[str, Any]) -> str:
+    """The drawing and its ranking, with what the run could not prove said plainly."""
+    if not graph or graph.get("state"):
+        return ""
+    level = esc(graph.get("level", "ACT"))
+    without = graph.get("assets_without_path", 0)
+    counted = kpi(
+        [
+            (f"Assets with a {level} finding", graph.get("assets_with_findings")),
+            (f"{level} findings behind them", graph.get("findings")),
+            ("Chokepoints found", graph.get("chokepoints_total")),
+            ("Assets with no path (assumed)", warn(without) if without else 0),
+        ]
+    )
+    drawn = _svg(graph)
+    picture = (
+        f"<div class='drawing'>{Safe(drawn)}</div>"
+        if drawn
+        else "<p class='note'>Nothing to draw: no observed path leads to a finding at this level.</p>"
+    )
+    levels = " · ".join(f"<a href='/exposure?level={lv}'>{lv}</a>" for lv in ("ACT", "ATTEND", "TRACK"))
+    return (
+        f"<h2>Where the ways in meet</h2>"
+        f"<p class='note'>Paths to the assets carrying a {level} decision · {Safe(levels)}</p>"
+        f"{picture}"
+        "<div class='cards'>"
+        + card("What is behind them", "", counted)
+        + card(
+            "What to close first",
+            "the findings behind a node, not the node itself",
+            _chokepoints(graph),
+            "2 1 520px",
+        )
+        + "</div>"
+    )
+
+
+def _hop(step: dict[str, Any]) -> str:
+    """One step of the path: what this node is."""
     kind = str(step.get("kind", ""))
-    seen = step.get("seen", "")
-    lines = [KINDS.get(kind, kind)]
+    return (
+        f"<div class='hop {esc(kind)}'><b>{esc(step.get('label') or step.get('node', ''))}</b>"
+        f"<div class='num'>{esc(KINDS.get(kind, kind))}</div></div>"
+    )
+
+
+def _crossing(step: dict[str, Any]) -> str:
+    """The link into a step: what was crossed to enter it, what saw it and when. A step carries the
+    evidence of the edge that leads to it (v0.24.0), so it is written on that link, never beside the
+    step before it."""
+    lines = []
     if step.get("source"):
         lines.append(f"seen by {step['source']}")
-    if seen:
-        lines.append(moment(seen)[:10])
-    box = (
-        f"<div class='hop {esc(kind)}'><b>{esc(step.get('label') or step.get('node', ''))}</b>"
-        f"<div class='num'>{esc(' · '.join(line for line in lines if line))}</div></div>"
-    )
-    if last:
-        return box
+    if step.get("seen"):
+        lines.append(moment(step["seen"])[:10])
     via = step.get("via", "")
-    return box + f"<div class='link'>→{f'<b>{esc(via)}</b>' if via else ''}</div>"
+    told = " · ".join(lines)
+    return f"<div class='link'>→{f'<b>{esc(via)}</b>' if via else ''}{f'<div>{esc(told)}</div>' if told else ''}</div>"
 
 
 def _path(detail: dict[str, Any]) -> str:
@@ -69,8 +227,11 @@ def _path(detail: dict[str, Any]) -> str:
             "case when nothing it collected reaches the asset — a scan of it, a flow declared by the client, "
             "or a sighting off the premises would settle it.</p>"
         )
-    hops = "".join(_hop(step, n == len(steps) - 1) for n, step in enumerate(steps))
-    return f"<div class='path'>{hops}</div>"
+    drawn = [_hop(steps[0])]
+    for step in steps[1:]:
+        drawn.append(_crossing(step))
+        drawn.append(_hop(step))
+    return f"<div class='path'>{''.join(drawn)}</div>"
 
 
 def _services(detail: dict[str, Any]) -> str:
@@ -137,7 +298,9 @@ def _asset_page(detail: dict[str, Any], tenant: str, gaps: list[dict[str, Any]])
     return head, body, footer
 
 
-def _list_page(assets: list[dict[str, Any]], tenant: str, total: int, chosen: str) -> tuple[str, str, str]:
+def _list_page(
+    assets: list[dict[str, Any]], tenant: str, total: int, chosen: str, graph: str = ""
+) -> tuple[str, str, str]:
     """The assets of the run, those the client cannot hide first."""
     head = (
         f"<b>Exposure — {esc(tenant)}</b>"
@@ -162,7 +325,7 @@ def _list_page(assets: list[dict[str, Any]], tenant: str, total: int, chosen: st
         if rows
         else "<p class='note'>No asset in the latest run.</p>"
     )
-    body = f"<h2>The assets of the run</h2><p class='note'>{Safe(links)}</p>{table}"
+    body = f"{graph}<h2>The assets of the run</h2><p class='note'>{Safe(links)}</p>{table}"
     footer = Safe(
         "An exposure from <code>assumed</code> is the worst case taken for want of proof, not a measure: "
         "a scan of the asset or a flow declared by the client settles it"
@@ -189,7 +352,11 @@ def page(data: dict[str, Any]) -> str:
         title = f"Exposure — {detail.get('name') or detail.get('asset', '')}"
     else:
         head, body, footer = _list_page(
-            data.get("assets") or [], tenant, int(data.get("total") or 0), str(data.get("exposure") or "")
+            data.get("assets") or [],
+            tenant,
+            int(data.get("total") or 0),
+            str(data.get("exposure") or ""),
+            _graph_block(data.get("graph") or {}),
         )
         title = f"Exposure — {tenant}"
     return shell(title, head, body, footer)

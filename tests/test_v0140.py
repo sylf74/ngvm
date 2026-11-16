@@ -68,6 +68,7 @@ def test_contract_names_the_routes_the_service_answers():
         "/v1/tenants/{tenant}/sla-state",  # v0.21.0
         "/v1/tenants/{tenant}/components",  # v0.22.2
         "/v1/tenants/{tenant}/progress",  # v0.26.2
+        "/v1/tenants/{tenant}/exposure-graph",  # v0.27.0
         "/healthz",
         "/readyz",
     }

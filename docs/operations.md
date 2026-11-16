@@ -1,4 +1,4 @@
-# Operator's manual (v0.26.3)
+# Operator's manual (v0.27.0)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -145,6 +145,27 @@ proof the run kept, and an exposure marked `assumed` is the worst case taken for
 a measure — a scan of the asset or a flow declared in the profile settles it (`docs/scanning.md`,
 the profile's `zones` and `flows`). The chat gives the same thing in words with
 `get_exposure_path`.
+
+### Where the ways in meet: the chokepoints (v0.27.0)
+
+At the top of the same page: the paths that lead to the assets carrying an ACT decision, drawn in
+four columns — the way in, the client's zones, what answers on the asset, the assets — each link as
+thick as the findings behind it, and under the drawing the chokepoints ranked by those findings. A
+zone or a published endpoint that carries the way in to twelve assets is one ticket, not twelve, and
+the number of findings behind it is what goes in that ticket. `?level=ATTEND` reads the same thing
+for the level below.
+
+The counts come from the run the decision service already holds (`GET /v1/tenants/<t>/exposure-graph`,
+read token), computed in memory: no graph database and nothing more pushed. Two things to keep in
+mind when reading it:
+
+- it counts what the run **observed**; it never says a path is the only way in, so closing a
+  chokepoint cuts the paths listed, not every path that may exist;
+- the assets whose exposure is assumed have no path, so they are outside the drawing and counted
+  apart (« Assets with no path »). A high number there means the graph is thin, not that the client
+  is safe: scan those assets or declare their flows.
+
+In the chat, `list_chokepoints` answers « par quoi commencer ? » with the same ranking.
 
 ### What the LLM cost, and whether it is worth it (v0.23.7)
 
