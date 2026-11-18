@@ -64,19 +64,25 @@ def _short(text: str, keep: int = 26) -> str:
     return text if len(text) <= keep else text[: keep - 1] + "…"
 
 
-def _layout(nodes: list[dict[str, Any]]) -> tuple[dict[str, tuple[int, int]], list[list[dict[str, Any]]], int]:
-    """Where each node is drawn: its column, then the heaviest first inside the column."""
+def _layout(
+    nodes: list[dict[str, Any]],
+) -> tuple[dict[str, tuple[int, int]], list[list[dict[str, Any]]], int, dict[int, int]]:
+    """Where each node is drawn: its column, then the heaviest first inside the column. Only the
+    columns that hold a node take room, in their order (v0.27.3): a neighbourhood of two columns
+    is drawn two columns wide, not on four with half the picture blank. The last value maps each
+    occupied column to its place in the drawing."""
     columns: list[list[dict[str, Any]]] = [[], [], [], []]
     for node in sorted(nodes, key=lambda n: (-n.get("findings", 0), -n.get("assets", 0), n.get("node", ""))):
         column = node.get("column", 3)
         if isinstance(column, int) and 0 <= column <= 3:
             columns[column].append(node)
+    slots = {index: place for place, index in enumerate(i for i, c in enumerate(columns) if c)}
     at: dict[str, tuple[int, int]] = {}
     for index, column in enumerate(columns):
         for row, node in enumerate(column[:PER_COLUMN]):
-            at[str(node.get("node"))] = (index * COL_W, MARGIN_TOP + row * GAP_Y)
+            at[str(node.get("node"))] = (slots[index] * COL_W, MARGIN_TOP + row * GAP_Y)
     rows = max((len(c[:PER_COLUMN]) for c in columns), default=0)
-    return at, columns, MARGIN_TOP + max(rows, 1) * GAP_Y
+    return at, columns, MARGIN_TOP + max(rows, 1) * GAP_Y, slots
 
 
 def _svg(graph: dict[str, Any], focus: str = "") -> str:
@@ -85,7 +91,7 @@ def _svg(graph: dict[str, Any], focus: str = "") -> str:
     nodes = graph.get("nodes") or []
     if not nodes:
         return ""
-    at, columns, height = _layout(nodes)
+    at, columns, height, slots = _layout(nodes)
     heaviest = max((e.get("findings", 0) for e in graph.get("edges") or []), default=1) or 1
     links = []
     for edge in graph.get("edges") or []:
@@ -140,16 +146,17 @@ def _svg(graph: dict[str, Any], focus: str = "") -> str:
             box = f"<a href='{where}'>{box}</a>"
         boxes.append(box)
     titles = "".join(
-        f"<text x='{i * COL_W}' y='16' font-size='11' fill='{FADED}'>{esc(title)}</text>"
+        f"<text x='{slots[i] * COL_W}' y='16' font-size='11' fill='{FADED}'>{esc(title)}</text>"
         for i, title in enumerate(COLUMN_TITLES)
         if columns[i]
     )
     more = "".join(
-        f"<text x='{i * COL_W}' y='{height - 14}' font-size='11' fill='{FADED}'>+{len(column) - PER_COLUMN} more</text>"
+        f"<text x='{slots[i] * COL_W}' y='{height - 14}' font-size='11' fill='{FADED}'>"
+        f"+{len(column) - PER_COLUMN} more</text>"
         for i, column in enumerate(columns)
         if len(column) > PER_COLUMN
     )
-    width = 3 * COL_W + BOX_W
+    width = (max(len(slots), 1) - 1) * COL_W + BOX_W
     return (
         f"<svg viewBox='0 0 {width} {height}' width='100%' height='{height}' role='img' "
         f"xmlns='http://www.w3.org/2000/svg' class='graph'>{titles}{''.join(links)}{''.join(boxes)}{more}</svg>"

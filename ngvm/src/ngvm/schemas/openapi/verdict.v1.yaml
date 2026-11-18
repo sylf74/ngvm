@@ -206,6 +206,29 @@ paths:
                   runs: {type: array, items: {$ref: "#/components/schemas/ProgressRun"}}
         "400": {$ref: "#/components/responses/Problem"}
         "401": {$ref: "#/components/responses/Problem"}
+  /v1/tenants/{tenant}/status:
+    get:
+      tags: [read]
+      operationId: serviceStatus
+      summary: The service itself, its version and the runs it keeps (since v0.23.9; in the contract since v0.27.3)
+      security:
+        - readToken: []
+      parameters:
+        - $ref: "#/components/parameters/tenant"
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, version, runs]
+                properties:
+                  service: {type: string, enum: [verdict]}
+                  version: {type: string, description: "the version of the running service, not of the runs"}
+                  runs: {type: integer}
+                  latest_run: {type: [object, "null"]}
+        "401": {$ref: "#/components/responses/Problem"}
   /v1/tenants/{tenant}/summary:
     get:
       tags: [read]

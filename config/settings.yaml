@@ -48,7 +48,7 @@ llm:
   tasks:
     ssvc_inputs: true          # Automatable / Technical Impact when no CISA ADP data and no CVSS
     match_adjudication: true   # confirm or reject fuzzy product matches
-    rationale: true            # French rationale (guarded, template fallback)
+    rationale: true            # English rationale (guarded, template fallback)
     rationale_for: [ACT, ATTEND]  # LLM rationale for these decisions; template for the rest
     max_calls: 300             # per client run; one rationale per CVE and decision, most urgent first
     parallel: 4                # concurrent requests (vLLM serves them together)

@@ -3,7 +3,7 @@
 client profiles, LLM client, and the libraries every pillar runs alone: the CISA SSVC tables
 (ngvm.ssvc) and the matching of declared assets (ngvm.declared)."""
 
-__version__ = "0.27.2"
+__version__ = "0.27.3"
 
 
 def _adopt_legacy_environment() -> None:

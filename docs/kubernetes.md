@@ -123,6 +123,7 @@ CI/CD variables of the tenant project (or of a subgroup):
 | `NGVM_WATCH_MAX_MB` | Optional, largest inventory the watch service accepts, in MB (default `50`, v0.23.18). The step `inventory` of the daily run says the size of what it sends (assets, findings) and, on a refusal (413), to raise it; the service's memory limit (`watch.resources`, 512Mi) holds about 5 times this | Visible |
 | `NGVM_VERDICT_MEMORY` | Optional, memory limit of the decision service, e.g. `3Gi` (default `2Gi`, v0.23.18). A push parses the whole run, about 5 times its `triage.json`; when the daily run's step `publish` says the service closed the connection and the service shows a restart `OOMKilled`, raise it | Visible |
 | `NGVM_WATCH_MEMORY`, `NGVM_WATCH_DEADLINE` | Optional (v0.26.0): memory limit and seconds of a watch passage (defaults `2Gi` and `1800`). A passage crosses the records of the day and their package advisories with every finding: it was killed at `1Gi` on 26 000 findings. Its log ends with the duration of each phase and the memory it needed | Visible |
+| `NGVM_WATCH_LLM_CACHE` | Optional (v0.27.3), `false`: the passages keep the LLM's answers in the pod rather than on their claim `ngvm-<tenant>-watch-llm-cache` (default `true`, §4) | Visible |
 | `NGVM_INTEL_SIZE` | Optional (v0.26.0), the volume of the shared intelligence service's cache (default `5Gi`, `1Gi` before). The offline archives of OSV alone approach a gigabyte, and a full volume left a cache file truncated, which stopped the watch of every tenant for two days | Visible |
 | `NGVM_RUN_MODE` | In the tenant's `.gitlab-ci.yml`: `gitlab` (default) or `kubernetes`, the daily run and the watch in the namespace only (§4) | — |
 | `NGVM_CHAT_HOST` | Optional: the analysts' chat on the decision service, at this host (v0.15.0, `chat.md`) | Visible |
@@ -150,6 +151,16 @@ later push to the default branch redeploys (new profile, new targets, new versio
 
 The Secrets (`ngvm-tenant`, `ngvm-intake`, `ngvm-verdict`, `ngvm-chat`, `ngvm-via`,
 `ngvm-dispatch`, `ngvm-intel`, `ngvm-registry`) and the alerts' template are created, then replaced
+Before it changes anything, `deploy-k8s` checks the addresses the pods will be given (v0.27.3,
+`deploy/k8s/check-addresses.sh`): `NGVM_INTEL_URL`, `NGVM_RELAY_URL`, each `NGVM_LLM_BASE_URL` and
+the host of `NGVM_REPORTING_DSN` and of each `NGVM_REPORTING_DSN_<NAME>`. A host that names a
+Service of the cluster (`<svc>.<ns>.svc[.cluster.local]`, or `<svc>.<ns>` when `<ns>` is a
+namespace of the cluster) must name one that exists, else the job stops on
+`ERROR NGVM_INTEL_URL points at the service … which does not exist`. An intel URL to a missing
+Service once deployed fine and failed in every passage. Other hosts are outside the cluster and
+left alone; a check the agent may not make (forbidden) is a warning. Only variable names, Services
+and namespaces are printed, never a value.
+
 No step of the pipeline runs `kubectl apply` (v0.25.8). A client-side apply reads the cluster's
 OpenAPI schema, and the GitLab agent server refuses to serve it (it accepts JSON, YAML and the
 Kubernetes protobuf only; the job then stops on `failed to download openapi`). The namespace is
@@ -242,6 +253,13 @@ off). The watch's mail settings come from the same CI/CD variables as in GitLab 
 `templates/alert*.docx` from the project. The first passage records the baseline (no alert), as a
 first watch in GitLab.
 
+The passages keep the LLM's answers on a claim of their own, `ngvm-<tenant>-watch-llm-cache`
+(1Gi, `watch.llmCache`, v0.27.3): their root is read-only and `/data` belongs to the daily run, so
+up to v0.27.2 they could not write the cache and asked the LLM everything again at each passage.
+One passage runs at a time (the CronJob forbids overlaps), so the claim is ReadWriteOnce; the send
+Job and the sender keep theirs in the pod. The claim is a cache: deleting it costs one passage of
+questions. `NGVM_WATCH_LLM_CACHE=false` on the project keeps it in the pod instead (no claim).
+
 ```bash
 NS=ngvm-homelab
 kubectl -n $NS get deploy,cronjob -l 'app.kubernetes.io/component in (via,watch)'
@@ -312,6 +330,39 @@ volumes are kept by an uninstall too (resource policy `keep`).
 
 Backups are the operator's (a `ScheduledBackup` to an object store, `deploy/cnpg/README.md`); NGVM
 sets none in this version. Without `NGVM_DATABASE`, nothing changes: the volumes, one replica each.
+
+### 5.1 A database whose isolation does not hold (v0.27.3)
+
+Each service checks at start, after its schema, that every table of its schema with a `tenant`
+column has row-level security enabled and forced, and only policies testing `ngvm.tenant`. When
+it does not hold, the service refuses to start and its log names each table and policy:
+
+```
+… the tables of verdict are not isolated by tenant (verdict.runs: policy runs_tenant tests
+<older>.tenant, not ngvm.tenant; …). Every query would see no row, or the rows of every tenant:
+refusing to start. Repair once with `ngvm db repair` (docs/kubernetes.md §5.1).
+```
+
+The usual cause is a database restored from a dump made before v0.25.0: its policies test the
+setting of the product's older name, and up to v0.27.2 every service then saw an empty tenant and said so calmly
+(`0 alert(s) kept`, `latest run none yet`). Starting from an empty database avoids it; when the data
+must be kept, restore, then repair once. The repair is never made at start: it is the operator's
+act, and it is `ngvm/src/ngvm/data/repair-policies.sql`, which drops every policy that tests another
+setting, enables and forces row-level security, and creates the policy `<table>_tenant` where none
+is left; each change is a NOTICE, and a second run changes nothing.
+
+While the services refuse to start, run it as the database's superuser in the CloudNativePG pod,
+from a clone of the release, then restart the services:
+
+```bash
+NS=ngvm-lab
+kubectl -n $NS exec -i ngvm-lab-db-1 -c postgres -- psql -d app -v ON_ERROR_STOP=1 < ngvm/src/ngvm/data/repair-policies.sql
+kubectl -n $NS rollout restart deploy -l ngvm/tenant=lab
+```
+
+Where the services' connection is at hand (`NGVM_DB_DSN_FILE` or `NGVM_DB_DSN`, as for the
+services), `ngvm db check` lists what breaks the isolation of every NGVM schema (exit 1), `ngvm db
+repair` runs the same file and checks again, and `ngvm db repair --sql` prints it.
 
 ## 6. Limits of this step
 

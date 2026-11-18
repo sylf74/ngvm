@@ -69,6 +69,7 @@ def test_contract_names_the_routes_the_service_answers():
         "/v1/tenants/{tenant}/components",  # v0.22.2
         "/v1/tenants/{tenant}/progress",  # v0.26.2
         "/v1/tenants/{tenant}/exposure-graph",  # v0.27.0
+        "/v1/tenants/{tenant}/status",  # served since v0.23.9, in the contract since v0.27.3
         "/healthz",
         "/readyz",
     }
