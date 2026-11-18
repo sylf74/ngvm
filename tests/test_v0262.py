@@ -225,7 +225,7 @@ VIA = {
     "failing_sources": [{"source": "vendor-x", "failed_passages_in_a_row": 6}],
 }  # fmt: skip
 DETECT = {"version": "0.26.2", "collectors": [{"id": "lan", "sources": [
-    {"source": "openvas", "age_hours": 5.2, "stale": False, "last_push": "2026-11-15T05:00:00+00:00"},
+    {"source": "openvas", "age_hours": 5.2, "stale": False, "last_received_at": "2026-11-15T05:00:00+00:00"},
     {"source": "cmdb", "age_hours": 50.0, "stale": True, "last_error": "refused"},
 ]}]}  # fmt: skip
 

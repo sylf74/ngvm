@@ -26,6 +26,7 @@ other files of `docs/`; day-to-day operation: `docs/operations.md`.
 | `deploy/intake/` | Script of the job `deploy-k8s` that turns the collectors' tokens into digests (stdlib and PyYAML only) |
 | `deploy/dispatch/` | Script of the job `deploy-k8s` that writes the values of the dispatch service (stdlib and PyYAML only) |
 | `deploy/chat/` | Scripts of the job `deploy-k8s` that write the values of the chat and of the analysts' sign-in and review page (stdlib only) |
+| `deploy/k8s/` | Checks of the job `deploy-k8s` before it changes anything: the addresses given to the pods name Services that exist (POSIX sh, kubectl only) |
 | `deploy/collector/` | Install script of a collector on its VM (`docs/collectors.md` §2) |
 | `deploy/tofu/` | OpenTofu: the platform from machines reached by SSH (`modules/platform`, its scripts in `scripts/`), on machines that exist (`existing`) or created on Scaleway, Azure or a KVM host (`docs/platform.md`, D22); checked by `check.sh` |
 | `deploy/cnpg/` | Installation of the CloudNativePG operator, once per Kubernetes cluster (the tenants' PostgreSQL, `docs/kubernetes.md` §5) |

@@ -172,6 +172,7 @@ def _agents(data: dict[str, Any]) -> str:
             ("Free", f"{volume.get('free_gb')} GB" if volume.get("free_gb") is not None else None),
             ("Watch service", agents.get("watch")),
             ("Decision service", agents.get("decision")),
+            ("Last run made by", agents.get("last_run_version")),
             ("Detection service", agents.get("detection")),
             ("Next daily run", moment(agents.get("next_daily_run")) if agents.get("next_daily_run") else None),
         ]

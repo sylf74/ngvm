@@ -5,6 +5,49 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.3 — 2026-11-18
+
+Refuse rather than stay silent: the reliability lot of the first days of the platform.
+
+- **A service refuses a database whose isolation does not hold**: at start, after its schema, each
+  service checks that every table of its schema with a `tenant` column has row-level security
+  enabled and forced, and only policies testing `ngvm.tenant`. A database restored from an A2VM dump
+  keeps policies testing `a2vm.tenant`, and every service then saw an empty tenant and said so calmly
+  (`0 alert(s) kept`, `latest run none yet`). It now stops on a message naming each table and
+  policy, and exits 2.
+- **The repair is the operator's act**, never made at start: `ngvm/src/ngvm/data/repair-policies.sql`
+  drops the policies that test another setting, enables and forces row-level security, and creates
+  `<table>_tenant` where none is left, each change said; run twice, it changes nothing. Run it with
+  `psql` in the CloudNativePG pod while the services refuse to start, or `ngvm db repair` where their
+  connection is at hand; `ngvm db check` lists what breaks the isolation (`docs/kubernetes.md` §5.1).
+- **An address to a missing Service stops the deployment**: before it changes anything, `deploy-k8s`
+  checks `NGVM_INTEL_URL`, `NGVM_RELAY_URL`, each `NGVM_LLM_BASE_URL` and the host of each
+  `NGVM_REPORTING_DSN*`; one that names a Service of the cluster must name one that exists
+  (`deploy/k8s/check-addresses.sh`). An intel URL to a missing Service had deployed fine and failed in
+  every passage. Hosts outside the cluster are left alone; a check the agent may not make is a
+  warning; only names are printed, never a value.
+- **The watch keeps its LLM answers**: the passages could not write their cache (their root is
+  read-only and `/data` is the daily run's) and asked the LLM everything again each time. They now
+  keep it on a claim of their own, `ngvm-<tenant>-watch-llm-cache` (1Gi, `watch.llmCache`); the send
+  Job and the sender keep theirs in the pod.
+- **The supervision page**: the last push of each collector is read from the field the detection
+  contract names (`last_received_at`; the column was always empty), and « Decision service » is the
+  version of the running service, with « Last run made by » beside it (it showed the version that had
+  made the last run). The decision service's `GET /v1/tenants/<t>/status` is now in its contract.
+- **The drawing of the paths folds onto the columns it uses**: a neighbourhood of two columns is
+  drawn two columns wide, not on four with half the picture blank.
+- **Documentation**: the portal in the cluster needs the images' registry (the `registry` block
+  beside `portal` with OpenTofu, `image.registry` and `image.pullSecret` with Helm), else its schema
+  job cannot pull the `verdict` image and the post-install times out (`docs/reporting.md`); the
+  rationale is written in English (`config/settings.yaml` and the README said French).
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.3`. A tenant
+whose database was restored from an A2VM dump: its services now refuse to start until the policies
+are repaired once (`docs/kubernetes.md` §5.1). A deployment whose `NGVM_INTEL_URL`, relay, LLM or
+reporting address names a missing Service now stops: correct the variable. The first passages create
+the claim of the LLM cache (1Gi of the default storage class); `NGVM_WATCH_LLM_CACHE=false` on the
+project keeps the cache in the pod instead.
+
 ## v0.27.2 — 2026-11-16
 
 Reading the graph of a client nobody can draw whole.

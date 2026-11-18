@@ -1,4 +1,4 @@
-# Operator's manual (v0.27.2)
+# Operator's manual (v0.27.3)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -309,6 +309,8 @@ shows an asset, with its scans since v0.18.1, even when it has no finding.
 | Collector journal: push refused `401` or `403` | Token of the collector changed or not declared in `collectors.yaml` | `docs/collectors.md` (declaration and tokens) |
 | Watch: `inventory none yet` | The daily run has not pushed its inventory to the watch service (step `inventory`; needs `NGVM_RUN_MODE: kubernetes`) | The log of the step `inventory` of the last daily run; it warns, and says what the watch keeps (since v0.23.19), when the service cannot be reached or refuses it |
 | Services restart two or three times after `NGVM_DATABASE=true` | They wait for the database's secret while the cluster initialises | None: they settle within two minutes |
+| A service in `CrashLoopBackOff`, its log: "the tables of … are not isolated by tenant … refusing to start" (v0.27.3) | A table of its schema is not kept to one tenant: usually a database restored from a dump made before v0.25.0 (policies testing the setting of the older name); up to v0.27.2 the services saw an empty tenant without a word | Repair once, as the database's superuser, then restart: `docs/kubernetes.md` §5.1 |
+| `deploy-k8s`: "ERROR NGVM_INTEL_URL points at the service … which does not exist" (v0.27.3) | The variable names a Service of the cluster that is not there (a typo, a namespace or a release renamed); the same for the relay, the LLM and the reporting addresses | Correct the variable (`kubectl -n <ns> get services` lists those there), then deploy again; nothing was changed |
 | `deploy-k8s`: "the CloudNativePG operator is not installed" | `NGVM_DATABASE=true` without the operator: the cluster's API answered, without `postgresql.cnpg.io` (before v0.23.19, also a failed discovery) | `deploy/cnpg/README.md` |
 | `deploy-k8s`: "the cluster's API did not answer the discovery through the agent … 3 times" (v0.23.19) | The GitLab agent's tunnel failed three times in a row; the `WARN` lines above give `kubectl`'s error | Run the pipeline again; if it lasts, the agent's pod (`kubectl -n gitlab-agent get pods`) and its log |
 | `helm get values` shows no `database` although `NGVM_DATABASE` is set | The job did not see the variable: protected variable on an unprotected branch, wrong name or value | Settings > CI/CD > Variables: `NGVM_DATABASE` = `true`, then run the pipeline again |

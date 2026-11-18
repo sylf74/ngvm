@@ -1188,12 +1188,13 @@ class Tools:
             {"run": previous.get("run", ""), "state": _chain_state(previous.get("steps") or [])} if previous else {}
         )
         summary = self._json(self._http, f"/v1/tenants/{self.tenant}/summary", "decision service")
+        decision = self._json(self._http, f"/v1/tenants/{self.tenant}/status", "decision service")
         via = self._json(self._via, f"/v1/tenants/{self.tenant}/status", "watch service")
         detect = self._detect_status()
         intel = self._json(self._intel, "/v1/status", "shared intelligence service") if self._intel else {}
         tickets = self._json(self._dispatch, f"/v1/tenants/{self.tenant}/tickets", "dispatch service", {"limit": "1"})
-        collectors = [
-            {"collector": c.get("id"), "source": x.get("source"), "last_push": x.get("last_push", x.get("pushed_at")),
+        collectors = [  # the field of the detection contract (CollectorStatus): last_received_at (v0.27.3)
+            {"collector": c.get("id"), "source": x.get("source"), "last_push": x.get("last_received_at", ""),
              "age_hours": x.get("age_hours"), "stale": bool(x.get("stale")), "last_error": x.get("last_error", "")}
             for c in detect.get("collectors", []) for x in c.get("sources", [])
         ]  # fmt: skip
@@ -1240,7 +1241,9 @@ class Tools:
                 },
             },
             "agents": {
-                "decision": summary.get("ngvm_version", "") or "no run yet",
+                # the service's own version (v0.27.3), not the version that made the last run
+                "decision": decision.get("version", decision.get("state", "")),
+                "last_run_version": summary.get("ngvm_version", "") or "no run yet",
                 "watch": via.get("version", via.get("state", "")),
                 "detection": detect.get("version", detect.get("state", "")),
                 "shared_intelligence": intel.get("version", intel.get("state", "not used for this tenant")),

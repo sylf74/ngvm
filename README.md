@@ -15,7 +15,7 @@ via/        1. VIA (Vulnerability Intelligence: Advanced, AI-assisted, Alerting)
 detect/     2. Vulnerability Detection   scanners + declared inventory                     -> work/detect/<client>/<source>.json
 verdict/    3. Triage & Prioritization
               verdict assets build       asset context consolidated per client             -> work/assets/<client>/
-              verdict run                CISA SSVC + policy, French rationale              -> output/<client>/<date>/
+              verdict run                CISA SSVC + policy, English rationale             -> output/<client>/<date>/
 dispatch/   4. Dispatch & Capitalization
               dispatch serve             remediation tickets in the ITSM, requests from dashboards
 ```

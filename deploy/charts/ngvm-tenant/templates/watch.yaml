@@ -48,6 +48,10 @@ containers:
     env:
       - name: NGVM_CACHE_DIR
         value: /tmp/cache
+      # The LLM's answers (v0.27.3): the root is read-only and /data is the daily run's, so the
+      # passages keep them on a claim of their own (one passage at a time: Forbid), a send in /tmp.
+      - name: NGVM_LLM_CACHE_FILE
+        value: {{ if .cache }}/llm-cache/llm-cache.json{{ else }}/tmp/llm-cache.json{{ end }}
       {{- include "ngvm-tenant.envCommon" $root | nindent 6 }}
       - name: NGVM_SEND_PIPELINE_URL
         value: {{ $root.Values.watch.sendPipelineUrl | quote }}
@@ -71,6 +75,10 @@ containers:
       - name: template
         mountPath: /alert-template
         readOnly: true
+      {{- if .cache }}
+      - name: llm-cache
+        mountPath: /llm-cache
+      {{- end }}
       {{- if .edits }}
       - name: edits
         mountPath: /edits
@@ -106,6 +114,11 @@ volumes:
     {{- else }}
     emptyDir: {}
     {{- end }}
+  {{- if .cache }}
+  - name: llm-cache
+    persistentVolumeClaim:
+      claimName: {{ include "ngvm-tenant.name" $root }}-watch-llm-cache
+  {{- end }}
   {{- if .edits }}
   - name: edits
     configMap:
@@ -120,6 +133,25 @@ volumes:
 {{- $w := .Values.watch }}
 {{- $db := .Values.database.enabled }}
 {{- if not $w.send.job }}
+{{- if $w.llmCache.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-watch-llm-cache
+  labels:
+    {{- include "ngvm-tenant.labels" . | nindent 4 }}
+    app.kubernetes.io/component: watch
+spec:
+  # The LLM's answers of the passages (v0.27.3): a cache, rebuilt if lost; one passage at a time.
+  accessModes: [ReadWriteOnce]
+  {{- if $w.llmCache.storageClass }}
+  storageClassName: {{ $w.llmCache.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $w.llmCache.size | quote }}
+---
+{{- end }}
 {{- if not $db }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -335,7 +367,7 @@ spec:
             app.kubernetes.io/component: watch
         spec:
           {{- $script := printf "rc=0\nvia service watch --url %s --tenant %s --token-file /secrets/via-run-token \\\n  /tmp/cfg/client.yaml --settings \"$SETTINGS\" --sources \"$SOURCES\" --contacts /tmp/cfg/contacts.yaml || rc=$?\n# 3: a source down or a mail not sent, said in the log; the passage is kept.\nif [ \"$rc\" -eq 3 ]; then echo \"WARN passage done with warnings\"; exit 0; fi\nexit \"$rc\"" (include "ngvm-tenant.viaUrl" . | quote) (.Values.tenant | quote) }}
-          {{- include "ngvm-tenant.watchPod" (dict "root" . "container" "watch" "script" $script) | nindent 10 }}
+          {{- include "ngvm-tenant.watchPod" (dict "root" . "container" "watch" "script" $script "cache" $w.llmCache.enabled) | nindent 10 }}
 {{- if $w.networkPolicy.enabled }}
 ---
 # The watch service: its API from the tenant's jobs (daily run, watch, send) and the analysts' tools

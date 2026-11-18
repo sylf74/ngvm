@@ -293,6 +293,12 @@ watch:
   storage:
     size: 1Gi
     storageClass: ""
+  # The LLM's answers kept from one passage to the next (v0.27.3; before, the passages could not
+  # write them and asked everything again): a claim of the passages only. false: kept in the pod.
+  llmCache:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
   resources:
     requests: {cpu: 20m, memory: 64Mi}
     limits: {memory: 512Mi}   # 256Mi up to v0.23.17: an inventory of 50 MB did not fit

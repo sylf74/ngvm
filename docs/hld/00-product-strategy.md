@@ -303,7 +303,9 @@ Migration, each step usable on its own:
    tenant project declares its collectors (LLD detection §8).
 3. **Shared platform.** PostgreSQL in the cluster: since v0.18.0 each tenant has its own cluster
    (CloudNativePG, in its namespace) behind its services, a schema per pillar, row-level security
-   per tenant; the reporting database may move from its VM into the cluster. Then the event bus
+   per tenant, checked by each service at start: one that finds a table not kept to one tenant
+   refuses to start rather than answer from an empty tenant (v0.27.3, `docs/kubernetes.md` §5.1);
+   the reporting database may move from its VM into the cluster. Then the event bus
    and the observability stack.
 4. **The two APIs that unblock the most**: decisions (pillar 3, `ngvm.decision_request/1` →
    `ngvm.decision/1`) and records (pillar 1, VIA team); the watch asks verdict for the decision of
@@ -613,7 +615,8 @@ release.
 | v0.26.3 | D21: the exposure path of an asset drawn beside the run page — the internet or a zone, the flow, the service, the asset, each step with its source and its date; the assets of the run to pick from, and the gaps that concern each. The whole graph and its chokepoints stay to come | 2, 3 |
 | v0.27.0 | D21: the chokepoints of a run — the nodes the paths to the ACT assets go through, ranked by the findings behind them, drawn in four columns on the exposure page and answered in the chat (`list_chokepoints`), computed in memory from the run; the reach of a compromise and the exposure per finding stay to come | 2, 3, 4 |
 | v0.27.1 | D21: the drawing of the paths carries its own colours, after a missing stylesheet rule made it black on black | 2, 3 |
-| v0.27.2 (current) | D21: the graph read node by node — every box and every chokepoint a link to the neighbourhood of that node, with the assets behind it; a whole graph being undrawable at a client's scale, and a link needing no script | 2, 3 |
+| v0.27.2 | D21: the graph read node by node — every box and every chokepoint a link to the neighbourhood of that node, with the assets behind it; a whole graph being undrawable at a client's scale, and a link needing no script | 2, 3 |
+| v0.27.3 (current) | D15: refuse rather than stay silent — a service whose tables are not kept to one tenant (a database restored from A2VM) refuses to start, repaired by the operator (`ngvm db repair`); an address to a missing Service stops the deployment; the watch's LLM answers kept between passages; the supervision page's last pushes and decision-service version; the drawing folded on the columns it uses | 1, 2, 3 |
 | Later | The radar and the shared service in a cloud cluster for the watch team (`docs/hld/proposals/intel-placement.md`, topologies B to D): an ingress of the shared service (`intel.serve.ingress`), client tenants reaching it over HTTPS (`intel.url` https, `intel.ca`, the tool server's egress), `deploy/cloud-k8s/` (k3s on an instance, cert-manager, GitLab agent); when an operator needs it, the relay of v0.23.4 being enough for the corporate case | 1 |
 | Later | The Secret keeps the proxy's CA only, each pod assembling the system's CAs and it at start (as the chat does), instead of the whole bundle (about 180 KB) | 3 |
 | Later (D20) | An image's scan skipped when its digest has not changed (its libraries re-checked by OSV meanwhile); every library loaded by the running processes tied to its package (not only the deleted ones); the levels of proof for the libraries (`in-memory` raising a fix to not applied); the scanners' own schedules where their API gives them (OpenVAS tasks, Cyberwatch), the next scan per asset; the components embedded by each appliance line, proposed by the LLM from its vendor's past advisories and validated; scan of the application directories; the coverage map per kind of asset (what each source sees, what stays invisible); a scan targeted at the assets an alert names, without waiting for the next cycle | 1, 2, 3 |

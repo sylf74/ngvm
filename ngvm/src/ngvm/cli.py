@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LicenseRef-ngvm-proprietary
 """`ngvm validate client.yaml ...`: check client profiles against their schema, and the client
-project's pipeline file: the template included and the code fetched must be the same version."""
+project's pipeline file: the template included and the code fetched must be the same version.
+`ngvm db check` / `ngvm db repair` (v0.27.3): the tenant isolation of the tenant's database, read
+from NGVM_DB_DSN_FILE or NGVM_DB_DSN as the services read it (docs/kubernetes.md §5.1)."""
 
 from __future__ import annotations
 
@@ -49,13 +51,56 @@ def check_ci(path: str | Path, environ=None) -> list[str]:
     return problems
 
 
+def db_command(action: str, print_sql: bool = False) -> int:
+    """`ngvm db check|repair`: the isolation of every NGVM schema present in the database."""
+    from .db import SCHEMAS, Database, DatabaseError, dsn_from_env, isolation_problems, repair_sql
+
+    if action == "repair" and print_sql:
+        print(repair_sql(), end="")
+        return 0
+    try:
+        dsn = dsn_from_env()
+        if not dsn:
+            print("no database: set NGVM_DB_DSN_FILE (or NGVM_DB_DSN), as for the services", file=sys.stderr)
+            return 2
+        db = Database(dsn, "ngvm-db", [], size=1)
+        if action == "repair":
+            changes = db.repair_isolation()
+            for line in changes:
+                print(f"FIXED {line}")
+            if not changes:
+                print("OK    nothing to repair")
+        failed = 0
+        with db.tx("") as conn:
+            present = [s for s in SCHEMAS if conn.execute("SELECT to_regnamespace(%s)", (s,)).fetchone()[0]]
+            for schema in present:
+                problems = isolation_problems(conn, schema)
+                failed += len(problems)
+                for p in problems:
+                    print(f"FAIL  {p}", file=sys.stderr)
+                if not problems:
+                    print(f"OK    {schema}: every table kept to one tenant ({db.describe()})")
+        db.close()
+    except DatabaseError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if not present:
+        print("OK    no NGVM schema in this database yet")
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ngvm", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     v = sub.add_parser("validate", help="validate client profiles against the schema")
     v.add_argument("profiles", nargs="+")
     v.add_argument("--ci", default=".gitlab-ci.yml", help="client project pipeline file, checked when present")
+    d = sub.add_parser("db", help="the tenant isolation of the tenant's database (check, or repair it)")
+    d.add_argument("action", choices=["check", "repair"])
+    d.add_argument("--sql", action="store_true", help="repair: print the SQL instead of running it (psql)")
     args = parser.parse_args(argv)
+    if args.command == "db":
+        return db_command(args.action, args.sql)
 
     failed = 0
     if args.ci and Path(args.ci).exists():

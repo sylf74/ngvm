@@ -147,6 +147,13 @@ helm upgrade --install portal deploy/charts/ngvm-portal -n ngvm-portal --create-
   --set dashboards.dispatchUrl=https://dispatch-lab.apps.example.org
 ```
 
+- **The images' registry is needed**: the job that creates the schema after each install and
+  upgrade runs the `verdict` image. With OpenTofu, the platform's `portal` block needs the
+  `registry` block beside it (its host and deploy token: the pull secret `ngvm-registry`); with
+  Helm, `image.registry` and, for a private registry, `image.pullSecret` (a Secret of type
+  `kubernetes.io/dockerconfigjson` in the portal's namespace). Without them the job cannot pull the
+  image and the post-install hook times out (`helm … --wait` fails after its timeout, the pod in
+  `ImagePullBackOff`).
 - **Grafana's admin**: user `admin`, password in the Secret `portal-portal-grafana`, key
   `admin-password`, read where it is: `kubectl -n ngvm-portal get secret portal-portal-grafana -o
   jsonpath='{.data.admin-password}' | base64 -d | pbcopy`.
