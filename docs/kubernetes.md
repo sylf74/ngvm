@@ -116,7 +116,8 @@ CI/CD variables of the tenant project (or of a subgroup):
 | --- | --- | --- |
 | `NGVM_K8S_CONTEXT` | The agent context, `<agent project path>:<agent name>`, e.g. `vulnops/k8s:homelab` | Visible |
 | `NGVM_K8S_NAMESPACE` | Optional, default `ngvm-<project name>` | Visible |
-| `NGVM_K8S_SCHEDULE` | Optional, cron in Europe/Paris, default `45 5 * * *` | Visible |
+| `NGVM_K8S_SCHEDULE` | Optional, cron in Europe/Paris, default `45 5 * * *`. With a relay of the sources that keeps hours, within them (`deploy/relay/README.md`, v0.27.7) | Visible |
+| `NGVM_WATCH_SCHEDULE` | Optional (v0.27.7), cron of the watch in Europe/Paris, default `*/10 * * * *`; e.g. `*/10 8-18 * * 1-5` while a relay of the sources is up only then | Visible |
 | `NGVM_K8S_SUSPEND` | Optional, `true` keeps the daily CronJob suspended from one deployment to the next (the radar tenant, `docs/radar.md`), default `false` | Visible |
 | `NGVM_IMAGE_REGISTRY` | Optional, default `<registry>/<code project path>`; another registry (Harbor, v0.23.4): `harbor.example.org/ngvm`, with `NGVM_REGISTRY`, `NGVM_REGISTRY_USER`, `NGVM_REGISTRY_PASSWORD` (a robot account allowed to pull) | Visible |
 | `NGVM_VERDICT_SERVICE` | Optional, `false` to deploy no decision service (default `true`, v0.14.0) | Visible |

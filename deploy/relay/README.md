@@ -58,3 +58,19 @@ them from the environment. Then `via check-sources` shows the route of each sour
 Add it to `hosts` (and to `NGVM_RELAY_HOSTS`), then `terraform apply`: the instance is rebuilt with
 the new Caddyfile and keeps its address when `ip_address` is set. Or edit
 `/opt/ngvm-relay/Caddyfile` on the instance and `podman-compose restart` (lost at the next rebuild).
+
+## A relay that keeps hours
+
+A relay stopped out of office hours to save its cost (v0.27.7) is fine if the tenant's runs keep
+them too. The daily run checks the relay before reading any source: if it cannot be reached it
+stops at once with one line, `ERROR the relay of the sources https://… cannot be reached
+(ConnectTimeout …)`, rather than triage CVEs it knows nothing of. Give the tenant, in Europe/Paris:
+
+| Variable | Example | What |
+| --- | --- | --- |
+| `NGVM_K8S_SCHEDULE` | `15 8 * * 1-5` | the daily run, once the relay is up, working days |
+| `NGVM_WATCH_SCHEDULE` | `*/10 8-18 * * 1-5` | the watch, only while the relay is up |
+
+A public holiday has no cron: `NGVM_K8S_SUSPEND=true` the day before, or let the run stop and say
+why. With the shared intelligence service (`NGVM_INTEL_URL`) the records come from it, and the relay
+is no longer checked first: a list it cannot read is a warning.

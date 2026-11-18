@@ -91,7 +91,7 @@ def test_documented() -> None:
     ops = (ROOT / "docs/operations.md").read_text(encoding="utf-8")
     assert "In v0.27.5 only, a runner outside the LAN" in ops
     hld = (ROOT / "docs/hld/00-product-strategy.md").read_text(encoding="utf-8")
-    assert "| v0.27.6 (current) |" in hld
+    assert re.search(r"^\| v0\.27\.6( \(current\))? \|", hld, re.M)
 
 
 def test_release_recorded() -> None:
