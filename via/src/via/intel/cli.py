@@ -13,7 +13,7 @@ from ngvm.config import describe_gti, describe_intel, describe_relay, load_setti
 from ngvm.io import detection_files, read_detection, write_records
 
 from .collect import collect, select_cve_ids
-from .sources import Sources
+from .sources import SourceError, Sources
 
 
 def parse_since(value: str) -> dt.datetime:
@@ -68,17 +68,36 @@ def main(argv: list[str] | None = None) -> int:
     print(describe_relay(settings))
     sources = Sources(settings.sources, fixtures_dir=args.fixtures)
     try:
+        # v0.27.7: every source of this tenant goes through its relay; a relay that cannot be
+        # reached (stopped out of its hours, its address changed) is said once, and the run stops
+        # rather than triage CVEs it knows nothing of.
+        if sources.relay and not sources.fixtures and not settings.sources.intel_url:
+            problem = sources.relay.problem(sources._client)
+            if problem:
+                print(
+                    f"ERROR the relay of the sources {sources.relay.url} cannot be reached ({problem}): "
+                    "no source can be read, the run stops. A relay stopped out of its hours? "
+                    "Run the daily run within them (NGVM_K8S_SCHEDULE, docs/kubernetes.md)",
+                    file=sys.stderr,
+                )
+                return 1
         explicit = list(args.cve or []) + (read_cve_file(args.cve_file) if args.cve_file else [])
         if args.detect:
             found = sorted({f.cve_id for p in detection_files(args.detect) for f in read_detection(p).findings})
             print(f"{len(found)} CVE found by scanners in {args.detect}")
             explicit += found
         since = parse_since(args.since) if args.since else None
-        cve_ids = select_cve_ids(sources, explicit, since, args.include_updated)
+        warnings: list[str] = []
+        cve_ids = select_cve_ids(sources, explicit, since, args.include_updated, warnings)
+        for warning in warnings:
+            print(f"WARN {warning}: going on with the other CVEs")
         if not cve_ids:
             print("no CVE selected (use --cve, --cve-file or --since)", file=sys.stderr)
             return 2
         result = collect(sources, cve_ids)
+    except SourceError as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
     finally:
         sources.close()
     for note in result.notes:

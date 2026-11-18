@@ -36,17 +36,33 @@ def select_cve_ids(
     explicit: list[str],
     since: dt.datetime | None = None,
     include_updated: bool = False,
+    warnings: list[str] | None = None,
 ) -> list[str]:
-    """Explicit ids first, then CVEs published since `since` and KEV additions since that day."""
+    """Explicit ids first, then CVEs published since `since` and KEV additions since that day.
+
+    A list that cannot be read (the deltaLog of CVE.org, the KEV) no longer stops the selection
+    (v0.27.7): it only adds CVEs to those given, so the others are kept and the list missing is
+    said in `warnings`."""
     ids: list[str] = []
     for cve in explicit:
         cve = cve.strip().upper()
         if cve and cve not in ids:
             ids.append(cve)
     if since:
-        for cve in sources.new_cve_ids(since, include_updated) + sources.kev_added_since(since.date()):
-            if cve not in ids:
-                ids.append(cve)
+        lists = (
+            ("CVEs published", lambda: sources.new_cve_ids(since, include_updated)),
+            ("KEV additions", lambda: sources.kev_added_since(since.date())),
+        )
+        for name, read in lists:
+            try:
+                found = read()
+            except SourceError as exc:
+                if warnings is not None:
+                    warnings.append(f"{name} since {since.isoformat(timespec='minutes')} not read: {exc}")
+                continue
+            for cve in found:
+                if cve not in ids:
+                    ids.append(cve)
     return ids
 
 

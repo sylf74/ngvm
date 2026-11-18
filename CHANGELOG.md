@@ -5,6 +5,26 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.7 — 2026-11-18
+
+A relay of the sources that keeps office hours.
+
+- **A relay that cannot be reached is said once**: a relay stopped out of office hours, or by a cloud
+  incident, made the step `via` of the daily run end on a trace (`deltaLog.json: timed out`). The step
+  now checks the relay before reading any source and, if no connection can be made, stops with one
+  line naming it, rather than triage CVEs it knows nothing of. Any HTTP answer, an error included,
+  says the relay is there. Not checked with the shared intelligence service, which gives the records.
+- **A list of new CVEs that cannot be read no longer stops the step**: the deltaLog of CVE.org and the
+  KEV only add CVEs to those the scanners found. Either missing is a `WARN` line, and the scanners'
+  CVEs are triaged all the same; the newly published ones come with the next run. Any other source
+  error ends the step on one `ERROR` line, without a trace.
+- **The watch's own schedule** (`NGVM_WATCH_SCHEDULE`, default every 10 minutes): a watch running at
+  night against a stopped relay only counted failures. With the daily run's `NGVM_K8S_SCHEDULE`, both
+  can keep the relay's hours (`deploy/relay/README.md`, "A relay that keeps hours").
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.7`. With a
+relay that keeps hours: `NGVM_K8S_SCHEDULE` and `NGVM_WATCH_SCHEDULE` within them.
+
 ## v0.27.6 — 2026-11-18
 
 The address of GitLab a runner really uses, read where the runner wrote it.

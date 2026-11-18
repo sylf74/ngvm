@@ -81,6 +81,16 @@ class Relay:
         host = (urlsplit(url).hostname or "").lower()
         return "relay" if host in self.hosts and url.startswith("https://") else "direct"
 
+    def problem(self, client: httpx.Client, timeout: float = 15) -> str | None:
+        """Why the relay cannot be reached, or None (v0.27.7). Any HTTP answer, an error included,
+        says it is there; only a connection that cannot be made says it is not: a relay stopped
+        out of its hours, an address changed, a firewall."""
+        try:
+            client.get(self.url + "/", timeout=timeout)
+        except httpx.TransportError as exc:
+            return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        return None
+
 
 class SourceAuthError(SourceError):
     """The source refused the credentials (HTTP 401 / 403): stop asking it for this run."""
