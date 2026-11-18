@@ -83,8 +83,9 @@ git push -u origin main && git push origin --tags
    cannot be moved under the client projects' feet.
 4. **Settings > CI/CD > Job token permissions**: keep "Limit access to this project" on and **add
    the group `vulnops/clients`**: client pipelines may then clone the code with their job token.
-   A job tries the address its runner fetched the client project from (`CI_REPOSITORY_URL`), then
-   `NGVM_SERVER_URL` when set, then GitLab's own address, and logs where the code came from (v0.27.5).
+   A job tries the address its runner fetched the client project from (the remote `origin` of its
+   checkout, the runner's `clone_url` if it has one, v0.27.6), then `CI_REPOSITORY_URL`, then
+   `NGVM_SERVER_URL` when set, then GitLab's own address, and logs where the code came from.
 
 The code project's own pipeline only runs lint, tests and the offline examples.
 
@@ -97,10 +98,10 @@ The code project's own pipeline only runs lint, tests and the offline examples.
 ```yaml
 include:
   - project: vulnops/ngvm
-    ref: v0.27.5
+    ref: v0.27.6
     file: templates/client-pipeline.yml
 variables:
-  NGVM_REF: v0.27.5
+  NGVM_REF: v0.27.6
   NGVM_RUN_MODE: gitlab   # or kubernetes: docs/kubernetes.md §4
 ```
 
