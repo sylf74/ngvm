@@ -1464,28 +1464,28 @@ class Tools:
             if level:
                 query["level"] = level
             try:
-                out["graph"] = self._get("exposure-graph", query)
+                out["graph"] = self._raw("exposure-graph", query)
             except Problem as problem:
                 out["graph"] = {"state": problem.detail}
             return out
         if asset:
             try:
-                out["asset"] = self._get(f"assets/{quote(asset, safe='')}/exposure", {})
+                out["asset"] = self._raw(f"assets/{quote(asset, safe='')}/exposure", {})
             except Problem as problem:
                 if problem.status != HTTPStatus.NOT_FOUND:
                     raise  # the service is down or refuses: the page says so, it does not invent
                 out["not_found"] = asset
                 return out
-            out["exposure_gaps"] = self._get("summary", {}).get("exposure_gaps") or []
+            out["exposure_gaps"] = self._raw("summary", {}).get("exposure_gaps") or []
             return out
         query = {"limit": str(limit)}
         if exposure in exposure_page.EXPOSURES:
             query["exposure"] = exposure
-        answer = self._get("assets", query)
+        answer = self._raw("assets", query)
         out["assets"] = answer.get("items") or []
         out["total"] = answer.get("total", len(out["assets"]))
         try:  # v0.27.0: a bonus block. A decision service that does not serve it (an older one, or
-            out["graph"] = self._get("exposure-graph", {"level": level} if level else {})
+            out["graph"] = self._raw("exposure-graph", {"level": level} if level else {})
         except Problem as problem:  # one that answers an error) must not take the list of assets down.
             out["graph"] = {"state": problem.detail}
         return out
@@ -1517,7 +1517,7 @@ class Tools:
         """The SSVC tree walked by the run's decisions; a decision service that cannot say it (an
         older one, no run yet) leaves the rest of the page as it is."""
         try:
-            return self._get("triage-graph", query)
+            return self._raw("triage-graph", query)
         except Problem as problem:
             return {"state": problem.detail}
 
@@ -1529,12 +1529,12 @@ class Tools:
         data: dict[str, Any] = {"tenant": self.tenant, "query": query}
         rid = query.get("id", "")
         if not rid and query.get("cve") and query.get("asset"):  # a CVE on an asset: one decision, if it is so
-            found = self._get("decisions", {"cve": query["cve"], "asset": query["asset"], "limit": "2"})
+            found = self._raw("decisions", {"cve": query["cve"], "asset": query["asset"], "limit": "2"})
             if found.get("total") == 1:
                 rid = found["items"][0]["id"]
         if rid:
             try:
-                data["decision"] = self._get(f"decisions/{quote(rid, safe=':@')}", {})
+                data["decision"] = self._raw(f"decisions/{quote(rid, safe=':@')}", {})
             except Problem as problem:
                 if problem.status != HTTPStatus.NOT_FOUND:
                     raise
@@ -1546,7 +1546,7 @@ class Tools:
         if search:
             if "level" in search:
                 search["level"] = search["level"].upper()
-            answer = self._get("decisions", {**search, "limit": str(SEARCH_MAX)})
+            answer = self._raw("decisions", {**search, "limit": str(SEARCH_MAX)})
             data["items"], data["total"] = answer.get("items") or [], answer.get("total", 0)
         return triagepages.decision_page(data)
 
@@ -1558,7 +1558,7 @@ class Tools:
         run = progress.get("run") or {}
         steps = run.get("steps") or []
         state = run.get("state", "")
-        summary = self._get("summary", {}) if run else {}
+        summary = self._raw("summary", {}) if run else {}
         watch = (progress.get("pillars") or {}).get("watch") or {}
         data = {
             "tenant": self.tenant,

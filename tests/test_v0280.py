@@ -268,20 +268,20 @@ def test_the_pages_are_served_and_routed() -> None:
     values = yaml.safe_load((ROOT / "deploy/charts/ngvm-tenant/values.yaml").read_text(encoding="utf-8"))
     assert values["pages"] == {"links": []}
     pipeline = (ROOT / "templates/client-pipeline.yml").read_text(encoding="utf-8")
-    assert '"Reports|${NGVM_PORTAL_URL:-}" "Grafana|${NGVM_GRAFANA_URL:-}"' in pipeline
+    assert "NGVM_GRAFANA_URL" in pipeline  # v0.28.1: the portal's Grafana alone
     assert "$LINKS $PULL" in pipeline
 
 
 # -- 5. documented ------------------------------------------------------------------------------------
 def test_documented() -> None:
     kube = (ROOT / "docs/kubernetes.md").read_text(encoding="utf-8")
-    assert "| `NGVM_GRAFANA_URL` |" in kube and "| `NGVM_PORTAL_URL` |" in kube
+    assert "| `NGVM_GRAFANA_URL` |" in kube
     llm = (ROOT / "docs/llm.md").read_text(encoding="utf-8")
     assert "max_timeouts" in llm
     ops = (ROOT / "docs/operations.md").read_text(encoding="utf-8")
     assert "questions not answered in time" in ops
     hld = (ROOT / "docs/hld/00-product-strategy.md").read_text(encoding="utf-8")
-    assert "| v0.28.0 (current) |" in hld
+    assert re.search(r"^\| v0\.28\.0( \(current\))? \|", hld, re.M)
 
 
 def test_release_recorded() -> None:

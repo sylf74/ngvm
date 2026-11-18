@@ -13,7 +13,7 @@
 #
 #     include:
 #       - project: vulnops/ngvm
-#         ref: v0.28.0
+#         ref: v0.28.1
 #         file: templates/client-pipeline.yml
 #     variables:
 #       NGVM_REF: v0.19.0        # same version as the include
@@ -546,14 +546,15 @@ deploy-k8s:
         OUT="$OUT --set relay.url=$NGVM_RELAY_URL --set relay.hosts={$(echo "${NGVM_RELAY_HOSTS:-}" | tr ' ;' ',,')}"
         if [ -z "${NGVM_RELAY_TOKEN:-}" ]; then echo "WARN NGVM_RELAY_URL without NGVM_RELAY_TOKEN: the relay will refuse the requests"; fi
       fi
-    # The dashboards on the central page of the analysts (v0.28.0): the reports' portal, Grafana.
+    # The dashboards on the central page of the analysts (v0.28.0): the Grafana of the portal
+    # (deploy/charts/ngvm-portal: the reporting database and Grafana; one portal, v0.28.1).
     - |
-      LINKS=""; n=0
-      for pair in "Reports|${NGVM_PORTAL_URL:-}" "Grafana|${NGVM_GRAFANA_URL:-}"; do
-        url="${pair#*|}"
-        case "$url" in "") continue ;; https://*) ;; *) echo "WARN ${pair%%|*}: $url is not an https:// address, left out"; continue ;; esac
-        LINKS="$LINKS --set pages.links[$n].name=${pair%%|*} --set pages.links[$n].url=$url"; n=$((n + 1))
-      done
+      LINKS=""
+      case "${NGVM_GRAFANA_URL:-}" in
+        "") ;;
+        https://*) LINKS="--set pages.links[0].name=Grafana --set pages.links[0].url=$NGVM_GRAFANA_URL" ;;
+        *) echo "WARN NGVM_GRAFANA_URL: $NGVM_GRAFANA_URL is not an https:// address, left out" ;;
+      esac
     - |
       FILES="--set-file files.profile=$NGVM_PROFILE"
       if [ -f "$NGVM_TARGETS" ]; then FILES="$FILES --set-file files.targets=$NGVM_TARGETS"; fi

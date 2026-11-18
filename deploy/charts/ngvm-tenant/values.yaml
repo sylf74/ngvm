@@ -169,8 +169,8 @@ dispatch:
 # namespace, on the tenant's approved LLM endpoints, with a read-only tool server (`verdict tools`)
 # on the decision service. Needs verdict.enabled. deploy-k8s enables it when NGVM_CHAT_HOST is set.
 # The central page of the analysts (v0.28.0, /home behind the review page's sign-in): the outside
-# dashboards it links to, [{name, url}] (NGVM_PORTAL_URL, NGVM_GRAFANA_URL); the chat is linked
-# from chat.host by itself.
+# dashboards it links to, [{name, url}] (NGVM_GRAFANA_URL: the Grafana of the portal); the chat is
+# linked from chat.host by itself.
 pages:
   links: []
 

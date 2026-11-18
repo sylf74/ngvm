@@ -98,6 +98,8 @@ def svg(graph: dict[str, Any], highlight: list[str] | None = None, link_level: b
     if highlight:
         on_path = {(i, highlight[i], highlight[i + 1]) for i in range(len(highlight) - 1)}
     for link in graph.get("links") or []:
+        if not isinstance(link, dict):  # a list cut short for a chat answer says so with a text
+            continue
         i, a = index.get(link["from"][0]), link["from"][1]
         j, b = index.get(link["to"][0]), link["to"][1]
         if i is None or j is None or (i, a) not in boxes or (j, b) not in boxes:

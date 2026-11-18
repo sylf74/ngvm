@@ -1,4 +1,4 @@
-# Operator's manual (v0.28.0)
+# Operator's manual (v0.28.1)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -135,9 +135,9 @@ reach it, as for the review page.
 
 At `/home` of the same host: one card for each page of the tenant — the run, the decisions, the
 exposure paths, the alerts to review — with its state and its numbers, and the outside dashboards
-the tenant links to: the chat (from its host), the reports' portal (`NGVM_PORTAL_URL`), Grafana on
-the reporting database (`NGVM_GRAFANA_URL`). An address that is not `https://…` is left out, and
-the deployment log says so.
+the tenant links to: the chat (from its host) and the portal's Grafana on the reporting database
+(`NGVM_GRAFANA_URL`, v0.28.1: one portal, so one address). An address that is not `https://…` is
+left out, and the deployment log says so.
 
 On `/run`, under the pillars, **the triage, decision by decision**: the SSVC tree (CISA Coordinator)
 drawn as the run's decisions walked it — one column per decision point (Exploitation, Automatable,
