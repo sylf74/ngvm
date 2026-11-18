@@ -13,7 +13,7 @@
 #
 #     include:
 #       - project: vulnops/ngvm
-#         ref: v0.27.5
+#         ref: v0.27.6
 #         file: templates/client-pipeline.yml
 #     variables:
 #       NGVM_REF: v0.19.0        # same version as the include
@@ -104,22 +104,29 @@ stages: [validate, deploy, collect, via, detect, assets, triage, publish, watch,
     - if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then export GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"; fi
     # GitLab behind a reverse proxy that asks for a client certificate (runner tls-cert-file)
     - if [ -n "${CI_SERVER_TLS_CERT_FILE:-}" ]; then export GIT_SSL_CERT="$CI_SERVER_TLS_CERT_FILE" GIT_SSL_KEY="$CI_SERVER_TLS_KEY_FILE"; fi
-    # The code of NGVM at NGVM_REF (v0.27.5: one way for every job). Tried in this order, the first
-    # that answers wins: the address this runner fetched the project from (CI_REPOSITORY_URL, path
-    # of a GitLab under a path kept: it works for this runner, inside the LAN or out), NGVM_SERVER_URL
-    # when set, GitLab's own address. A runner outside the LAN needs no variable any more; a wrong
-    # NGVM_SERVER_URL on a group no longer stops the runners it does not suit. Each try is bounded
-    # (60 s); no token is printed.
+    # The code of NGVM at NGVM_REF (one way for every job). Tried in this order, the first that
+    # answers wins: the address the runner fetched this project from, read on the remote `origin` of
+    # its checkout (v0.27.6: a runner's clone_url is never in CI_REPOSITORY_URL, which keeps GitLab's
+    # advertised address), CI_REPOSITORY_URL (no checkout: GIT_STRATEGY none), NGVM_SERVER_URL when
+    # set, GitLab's own address. The path of a GitLab under a path is kept. A runner outside the LAN
+    # with a clone_url needs no variable; a wrong NGVM_SERVER_URL on a group no longer stops the
+    # runners it does not suit. Each try is bounded (60 s); no token is printed.
     - &fetch_ngvm |
+      ngvm_base() {
+        case "$1" in *://*) ;; *) return 0 ;; esac
+        r="${1#*://}"; r="${r#*@}"
+        case "$r" in
+          *"/${CI_PROJECT_PATH:-}.git") r="${r%/"${CI_PROJECT_PATH}".git}" ;;
+          *"/${CI_PROJECT_PATH:-}") r="${r%/"${CI_PROJECT_PATH}"}" ;;
+          *) r="${r%%/*}" ;;
+        esac
+        echo "${1%%://*}://$r"
+      }
       NGVM_FROM=""
       TRIED=" "
-      REPO_BASE=""
-      if [ -n "${CI_REPOSITORY_URL:-}" ]; then
-        r="${CI_REPOSITORY_URL#*://}"; r="${r#*@}"
-        case "$r" in *"/${CI_PROJECT_PATH:-}.git") r="${r%/"${CI_PROJECT_PATH}".git}" ;; *) r="${r%%/*}" ;; esac
-        REPO_BASE="${CI_REPOSITORY_URL%%://*}://$r"
-      fi
-      for BASE in "$REPO_BASE" "${NGVM_SERVER_URL:-}" "${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}:${CI_SERVER_PORT}"; do
+      ORIGIN_BASE="$(ngvm_base "$(git -c safe.directory='*' -C "${CI_PROJECT_DIR:-.}" remote get-url origin 2>/dev/null || true)")"
+      REPO_BASE="$(ngvm_base "${CI_REPOSITORY_URL:-}")"
+      for BASE in "$ORIGIN_BASE" "$REPO_BASE" "${NGVM_SERVER_URL:-}" "${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}:${CI_SERVER_PORT}"; do
         BASE="${BASE%/}"
         case "$BASE" in ""|*://) continue ;; esac
         case "$TRIED" in *" $BASE "*) continue ;; esac

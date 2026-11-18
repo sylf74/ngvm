@@ -12,14 +12,16 @@ Two ways to authenticate, the first available wins:
   pipeline of the branch, and nothing when that pipeline has no such job. The source project must
   allow the reading project in Settings > CI/CD > Job token permissions.
 The API is reached at NGVM_SERVER_URL/api/v4 when it is set (the pods), else, in a job, by the
-address the runner fetched the project from (CI_REPOSITORY_URL, v0.27.5: a runner outside the LAN
-needs no variable), else at CI_API_V4_URL. The private CA and the client certificate that the
+address the runner fetched the project from: the remote `origin` of its checkout (v0.27.6: a
+runner's clone_url, which CI_REPOSITORY_URL never carries), else CI_REPOSITORY_URL, else
+CI_API_V4_URL. The private CA and the client certificate that the
 runner hands to the job are honoured.
 """
 
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -47,21 +49,48 @@ def _environ(environ: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if environ is None else environ
 
 
-def repository_base(environ: Mapping[str, str]) -> str | None:
-    """The address of GitLab the runner fetched the project from, without the job token.
-
-    `https://gitlab-ci-token:…@gitlab.example.org:8443/git/group/project.git` with the project
-    `group/project` gives `https://gitlab.example.org:8443/git`.
-    """
-    url = environ.get("CI_REPOSITORY_URL", "")
+def _base(url: str, project: str) -> str | None:
+    """`https://gitlab-ci-token:…@gitlab.example.org:8443/git/group/project.git` with the project
+    `group/project` gives `https://gitlab.example.org:8443/git`; no token is kept."""
     if "://" not in url:
         return None
-    scheme, rest = url.split("://", 1)
+    scheme, rest = url.strip().split("://", 1)
     rest = rest.split("@", 1)[-1]
-    suffix = f"/{environ.get('CI_PROJECT_PATH', '')}.git"
-    under_path = bool(environ.get("CI_PROJECT_PATH")) and rest.endswith(suffix)
-    rest = rest[: -len(suffix)] if under_path else rest.split("/", 1)[0]
+    for suffix in (f"/{project}.git", f"/{project}"):
+        if project and rest.endswith(suffix):
+            rest = rest[: -len(suffix)]
+            break
+    else:
+        rest = rest.split("/", 1)[0]
     return f"{scheme}://{rest.rstrip('/')}" if rest else None
+
+
+_ORIGIN = re.compile(r'^\[remote "origin"\]\s*$(.*?)(?=^\[|\Z)', re.M | re.S)
+_URL = re.compile(r"^\s*url\s*=\s*(\S+)\s*$", re.M)
+
+
+def origin_url(project_dir: str | None) -> str | None:
+    """The URL of the remote `origin` of the job's checkout: the address the runner really used."""
+    if not project_dir:
+        return None
+    try:
+        config = (Path(project_dir) / ".git" / "config").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    section = _ORIGIN.search(config)
+    found = _URL.search(section.group(1)) if section else None
+    return found.group(1) if found else None
+
+
+def repository_base(environ: Mapping[str, str]) -> str | None:
+    """The address of GitLab the runner fetched the project from, without the job token: the remote
+    `origin` of the checkout (a runner's clone_url), else CI_REPOSITORY_URL."""
+    project = environ.get("CI_PROJECT_PATH", "")
+    for url in (origin_url(environ.get("CI_PROJECT_DIR")), environ.get("CI_REPOSITORY_URL", "")):
+        base = _base(url or "", project)
+        if base:
+            return base
+    return None
 
 
 def api_base(environ: Mapping[str, str] | None = None) -> str:

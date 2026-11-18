@@ -162,10 +162,12 @@ triage with the LLM) stay on the internal runner and get the detection through t
    ```
 
    The job fetches the code of NGVM, and reads the GitLab API, by the address the runner fetched
-   the project from (`clone_url`, since v0.27.5): no `NGVM_SERVER_URL` is needed in the runner's
-   environment (before v0.27.5 it was, `environment = ["NGVM_SERVER_URL=https://gitlab.example.org"]`;
-   it may stay). Never set it on a group: the runners of the LAN would use it too. The client
-   certificate is handed to git through `CI_SERVER_TLS_CERT_FILE` and `CI_SERVER_TLS_KEY_FILE`.
+   the project from, its `clone_url`, read on the remote `origin` of the job's checkout (since
+   v0.27.6): no `NGVM_SERVER_URL` is needed in the runner's environment. Before v0.27.6 it was,
+   `environment = ["NGVM_SERVER_URL=https://gitlab.example.org"]` (v0.27.5 read
+   `CI_REPOSITORY_URL`, which keeps GitLab's advertised address whatever the `clone_url`); it may
+   stay. Never set it on a group: the runners of the LAN would use it too. The client certificate
+   is handed to git through `CI_SERVER_TLS_CERT_FILE` and `CI_SERVER_TLS_KEY_FILE`.
 
 2. In the client project, run the collection there and talk to gvmd over the socket:
 

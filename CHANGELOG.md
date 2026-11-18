@@ -5,6 +5,24 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.6 — 2026-11-18
+
+The address of GitLab a runner really uses, read where the runner wrote it.
+
+- **The remote `origin` of the job's checkout first**: v0.27.5 took the runner's address from
+  `CI_REPOSITORY_URL`, but that variable keeps GitLab's advertised address whatever the runner's
+  `clone_url` (a known limit of GitLab). A runner outside the LAN, with `clone_url` set to the public
+  address and without `NGVM_SERVER_URL`, then tried the internal address twice
+  (`Could not resolve host`) and stopped: v0.27.5 did not, as its notes said, make the variable
+  useless there. The jobs now read the address on the remote `origin` of the checkout the runner
+  has just made (its `clone_url` when it has one), then `CI_REPOSITORY_URL` (a job without checkout),
+  `NGVM_SERVER_URL`, GitLab's own address. The GitLab API in a job follows the same order, after
+  `NGVM_SERVER_URL` when set.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.6`. A runner
+outside the LAN with a `clone_url` no longer needs `NGVM_SERVER_URL` in its environment (it may stay;
+keep it until the first green pipeline). On v0.27.5, keep it.
+
 ## v0.27.5 — 2026-11-18
 
 Every job fetches the code of NGVM by the address its runner already reaches.
