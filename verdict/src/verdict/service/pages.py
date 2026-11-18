@@ -18,7 +18,7 @@ from typing import Any
 
 CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; img-src 'none'; "
-    "form-action 'none'"
+    "form-action 'self'"
 )
 STYLE = """
 body{font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;margin:0;color:#1a1a1a;background:#f7f7f5}
@@ -42,7 +42,7 @@ h2{margin:28px 0 10px;font-size:17px}
 .card p.note{margin:0 0 8px}
 table.kpi{border-collapse:collapse;width:100%}
 .kpi td{border-bottom:1px solid #f0f0ed;padding:3px 0;font-size:14px;vertical-align:top}
-.kpi td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;padding-left:8px}
+.kpi td.v{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;padding-left:8px;white-space:nowrap}
 table.list{border-collapse:collapse;width:100%;background:#fff}
 .list th,.list td{border-bottom:1px solid #e3e3e0;padding:6px 8px;text-align:left;font-size:13px}
 .list th{background:#eeeeea}

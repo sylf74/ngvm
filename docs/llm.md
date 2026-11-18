@@ -30,6 +30,14 @@ How each family takes the level:
 | `mistral` | `mistral`, `magistral` | `reasoning_effort` | `none` | `high` |
 | `generic` | anything else | nothing | - | - |
 
+The limits of a run, in `llm.tasks` of `settings.yaml`: `max_calls` (300 questions per tenant run),
+`parallel` (4 at a time, a free place given to the next rationale at once since v0.28.0),
+`max_consecutive_errors` (3 errors in a row leave the LLM aside for the run) and `max_timeouts` (3
+questions not answered in `llm.timeout_seconds`, consecutive or not, do the same, v0.28.0). A
+question not answered in time is not asked again (v0.28.0): asked again, it waited as long each time.
+The triage log says what the questions without an answer cost:
+`LLM: 6 question(s) without an answer (6 not answered in time), 1080.0 s spent waiting for them`.
+
 For the triage and the watch, `off` is the right level: the answers are short, the SSVC tables
 decide (D4), and the guard checks every rationale. The job log says what each job received:
 `LLM: enabled, base_url=…, model=…, family gpt-oss, reasoning off`.

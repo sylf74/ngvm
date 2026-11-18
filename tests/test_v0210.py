@@ -249,7 +249,7 @@ def test_the_deliverables_show_the_priorities(settings, sources, tmp_path):
     assert "| Priority |" in report and "P0, 2026-11-04" in report
     assert "first observation" in report  # no history known
     csv = (target / "triage.csv").read_text()
-    assert csv.splitlines()[0].endswith(";priority;sla_due;bod_due")
+    assert ";priority;sla_due;bod_due" in csv.splitlines()[0]
     data = read_reporting(target / "reporting.json")
     kev = next(d for d in data["decisions"] if d["kev"])
     assert (kev["priority"], kev["sla_due"], kev["due_date"], kev["sla_status"]) == (

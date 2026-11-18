@@ -1,4 +1,4 @@
-# Operator's manual (v0.27.7)
+# Operator's manual (v0.28.0)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -130,6 +130,39 @@ kubectl -n ngvm-lab port-forward deploy/ngvm-lab-tools 8080:8080
 The second command gives the page at `http://127.0.0.1:8080/run` for a tenant without the review
 page; whoever reaches that port sees it, so the NetworkPolicy lets only oauth2-proxy and the chat
 reach it, as for the review page.
+
+### The central page, and the triage decision by decision (v0.28.0)
+
+At `/home` of the same host: one card for each page of the tenant — the run, the decisions, the
+exposure paths, the alerts to review — with its state and its numbers, and the outside dashboards
+the tenant links to: the chat (from its host), the reports' portal (`NGVM_PORTAL_URL`), Grafana on
+the reporting database (`NGVM_GRAFANA_URL`). An address that is not `https://…` is left out, and
+the deployment log says so.
+
+On `/run`, under the pillars, **the triage, decision by decision**: the SSVC tree (CISA Coordinator)
+drawn as the run's decisions walked it — one column per decision point (Exploitation, Automatable,
+Technical impact, Mission & well-being), then the SSVC outcome and the delivery decision; one box per
+value with the decisions that took it and the time they cost, and between two columns a band as wide
+as the decisions that went that way. Under it, the paths taken most, with the decisions of each that
+are for review: when most decisions are for review, the path says which estimated input sends them
+there. Then **where the triage time went**: the step, the decisions, the rationales; the LLM's
+questions, those without an answer and the time spent waiting for them; per rationale outcome
+(answered, from the cache, not in time, budget reached) the decisions and the time; the ten
+decisions that cost most.
+
+At `/decision`, a search by CVE, asset, text or decision (100 answers at most), and the page of one
+decision: its path drawn over the run's tree, each input with the source of its value (an estimated
+one marked), the SSVC outcome and how it became the delivery decision, why it is for review, its
+rationale and what it cost. A box of the decision column of the run page opens the decisions of that
+level. The same numbers are in `triage.csv` (`inputs_ms`, `decide_ms`, `llm_ms`, `llm`) and in the
+triage step's log (`time:`, `slow:`); the decision service gives the tree with
+`GET /v1/tenants/<t>/triage-graph` (read token).
+
+How to read the times: `inputs_ms` is the CVE's SSVC inputs, paid by the first decision of the CVE
+(an LLM estimate of Automatable and Technical impact is in it); `decide_ms` the decision on the
+asset; `llm_ms` the rationale of the CVE and decision, asked once for all its assets (the tree
+divides it among them). A run made before v0.28.0 carries no time: the tree is drawn, the times are
+empty.
 
 ### Why an asset is exposed: the path, drawn (v0.26.3)
 
@@ -315,6 +348,7 @@ shows an asset, with its scans since v0.18.1, even when it has no finding.
 | Watch log: "POST /watch/runs refused (413)", the same alerts drafted again at each passage | Before v0.27.4, a passage that drafted many alerts did not fit in one body and was never recorded | v0.27.4 sends its files in batches; before, raise `NGVM_WATCH_MAX_MB` |
 | `deploy-k8s`: "ERROR NGVM_INTEL_URL points at the service … which does not exist" (v0.27.3) | The variable names a Service of the cluster that is not there (a typo, a namespace or a release renamed); the same for the relay, the LLM and the reporting addresses | Correct the variable (`kubectl -n <ns> get services` lists those there), then deploy again; nothing was changed |
 | A job: "WARN  NGVM not fetched from …" then "ERROR NGVM v… could not be fetched … by any address" (v0.27.5) | No address answered: the job token not allowed on the code project, `NGVM_REF` not a tag of it, or GitLab not reached from the runner; each `WARN` gives git's reason, without the token | The allowlist of the code project (`docs/deployment.md` §4), the tag, the runner's network; before v0.27.5 a group `NGVM_SERVER_URL` sent the runners of the LAN to the public address (403): remove it. In v0.27.5 only, a runner outside the LAN tried GitLab's internal address twice (`Could not resolve host`): put `NGVM_SERVER_URL` back in its environment, or move to v0.27.6 |
+| A triage step of nearly an hour, `LLM: … 182.5 s` but `deciding 3402 s` (before v0.28.0) | Rationales the LLM did not answer in time: each asked three times, 180 s each, with the other questions of its batch waiting; that time was counted nowhere | v0.28.0 asks once, counts the time (`LLM: n question(s) without an answer … s spent waiting`), leaves the LLM aside after three questions not answered in time (`llm.tasks.max_timeouts`) and no longer waits by batches; then why the server is slow: its load (the chat, the watch), its context, `NGVM_LLM_*` |
 | Step `via`: "ERROR the relay of the sources … cannot be reached" (v0.27.7) | The relay does not answer: stopped (out of its hours, a cloud incident), its address changed, a firewall; before v0.27.7 a trace ending with `deltaLog.json: timed out` | Start the relay, or run the daily run and the watch within its hours (`NGVM_K8S_SCHEDULE`, `NGVM_WATCH_SCHEDULE`, `deploy/relay/README.md`); then the daily run again |
 | Step `via`: "WARN CVEs published since … not read" or "KEV additions … not read" (v0.27.7) | That list could not be read; the CVEs found by the scanners are triaged all the same | None if it does not last; the newly published CVEs come with the next run |
 | `deploy-k8s`: "the CloudNativePG operator is not installed" | `NGVM_DATABASE=true` without the operator: the cluster's API answered, without `postgresql.cnpg.io` (before v0.23.19, also a failed discovery) | `deploy/cnpg/README.md` |

@@ -82,6 +82,10 @@ spec:
             - --tools={{ $chat.offeredTools }}
             {{- end }}
             - --public-url={{ printf "https://%s" $chat.host }}
+            - --link=Chat={{ printf "https://%s" $chat.host }}
+            {{- range .Values.pages.links }}
+            - --link={{ .name }}={{ .url }}
+            {{- end }}
             - --export-minutes={{ $chat.exportMinutes }}
             {{- if .Values.watch.enabled }}
             - --via-url={{ include "ngvm-tenant.viaUrl" . }}

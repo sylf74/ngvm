@@ -41,6 +41,10 @@ CSV_FIELDS = [
     "priority",  # v0.21.0: the client's SLA (empty without one)
     "sla_due",
     "bod_due",
+    "inputs_ms",  # v0.28.0: what the finding cost (TriageRow.timing)
+    "decide_ms",
+    "llm_ms",
+    "llm",
 ]
 
 
@@ -118,6 +122,7 @@ def write_csv(run: TriageRun, path: Path) -> None:
                     "priority": (r.sla or {}).get("priority", ""),
                     "sla_due": (r.sla or {}).get("due", "") if (r.sla or {}).get("priority") else "",
                     "bod_due": reporting.due_date(r) or "",
+                    **{k: r.timing.get(k, "") for k in ("inputs_ms", "decide_ms", "llm_ms", "llm")},
                 }
             )
 

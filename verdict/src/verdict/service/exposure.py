@@ -60,6 +60,9 @@ BOX_W, BOX_H, GAP_Y, COL_W, PER_COLUMN = 196, 44, 56, 244, 8
 MARGIN_TOP = 34
 
 
+LINKS = "<a href='/run'>the run</a> · <a href='/decision'>decisions</a> · <a href='/home'>home</a>"
+
+
 def _short(text: str, keep: int = 26) -> str:
     return text if len(text) <= keep else text[: keep - 1] + "…"
 
@@ -263,7 +266,7 @@ def _node_page(graph: dict[str, Any], tenant: str, depth: int) -> tuple[str, str
     head = (
         f"<b>Exposure — {esc(label)}</b>"
         f"<span>{esc(KINDS.get(kind, kind))} · {hops} hop(s) around it · {level} findings"
-        " · <a href='/exposure'>the whole picture</a> · <a href='/run'>the run</a></span>"
+        " · <a href='/exposure'>the whole picture</a> · " + LINKS + "</span>"
     )
     facts = kpi(
         [
@@ -364,7 +367,7 @@ def _asset_page(detail: dict[str, Any], tenant: str, gaps: list[dict[str, Any]])
         f"<b>Exposure — {esc(detail.get('name') or asset)}</b>"
         f"<span>{badge(exposure or 'unknown', 'assumed' if assumed else exposure)}"
         f" · {esc(WHY.get(exposure, ''))} · times in UTC"
-        " · <a href='/exposure'>all the assets</a> · <a href='/run'>the run</a></span>"
+        " · <a href='/exposure'>all the assets</a> · " + LINKS + "</span>"
     )
     mine = [g for g in gaps if g.get("asset") == asset or (not g.get("asset") and g.get("kind") == "no-external-scan")]
     gap_block = ""
@@ -411,7 +414,7 @@ def _list_page(
     head = (
         f"<b>Exposure — {esc(tenant)}</b>"
         f"<span>{esc(len(assets))} of {esc(total)} assets{f' · exposure {esc(chosen)}' if chosen else ''}"
-        " · most ACT first · <a href='/run'>the run</a></span>"
+        " · most ACT first · " + LINKS + "</span>"
     )
     chips = [f"<a href='/exposure?exposure={e}'>{e}</a>" for e in EXPOSURES]
     links = " · ".join([*chips, "<a href='/exposure'>all</a>"])

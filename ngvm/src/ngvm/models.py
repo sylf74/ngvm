@@ -485,6 +485,10 @@ class TriageRow:
     # Priority and SLA of the client (v0.21.0, D19): priority, rank, rule, days, calendar, since,
     # since_source, due, bod_due; {} when the client has no `sla` section.
     sla: dict[str, Any] = field(default_factory=dict)
+    # What deciding this finding cost (v0.28.0): inputs_ms (the CVE's SSVC inputs, paid by its first
+    # finding), decide_ms, llm_ms (its group's rationale), llm (off, not asked, cache, llm, timeout,
+    # rejected, error, budget, stopped).
+    timing: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

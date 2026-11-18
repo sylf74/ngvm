@@ -107,6 +107,9 @@ class LlmSettings:
     rationale_for: list[str] = field(default_factory=lambda: ["ACT", "ATTEND"])  # template for the rest
     max_calls: int = 300  # LLM calls per client run; beyond, templates and defaults (flagged)
     max_consecutive_errors: int = 3  # then the LLM is considered down for the rest of the run
+    # v0.28.0: questions not answered in time, consecutive or not, before the LLM is left aside for
+    # the rest of the run (an answer from the cache between two of them no longer hides them).
+    max_timeouts: int = 3
     parallel: int = 4  # concurrent LLM requests (vLLM batches them)
     # A reasoning model's thinking (Qwen3, v0.23.7): "off" or "on" sends chat_template_kwargs
     # enable_thinking to vLLM; "" sends nothing (other servers may refuse the field). Off, a

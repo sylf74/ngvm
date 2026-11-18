@@ -306,7 +306,7 @@ def test_the_run_records_how_long_the_triage_took_and_on_what(triage) -> None:
     doc = json.loads(path.read_text())
     validate_triage(doc)
     t = doc["timing"]
-    assert set(t) == {"started_at", "ended_at", "seconds", "findings", "decided", "without_record", "not_affected"}
+    assert {"started_at", "ended_at", "seconds", "findings", "decided", "without_record", "not_affected"} <= set(t)
     assert t["decided"] == len(doc["rows"]) and t["findings"] >= t["decided"] and t["seconds"] >= 0
     assert t["started_at"] <= t["ended_at"]
 

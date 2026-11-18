@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -128,6 +128,7 @@ class Triage:
         self.llm = llm if (llm and settings.llm.enabled) else None
         self.llm_calls = 0
         self.llm_errors_in_row = 0
+        self.llm_timeouts = 0  # questions not answered in time in this run (v0.28.0)
         self.llm_stopped: str | None = None  # why the LLM is no longer used in this run
         self._inputs: dict[str, CveInputs] = {}
         self._decisions: dict[tuple, str] = {}
@@ -209,6 +210,7 @@ class Triage:
         errors: list[dict[str, str]] | None = None,
     ) -> TriageRun:
         self.llm_calls, self.llm_errors_in_row, self.llm_stopped = 0, 0, None  # budget per client run
+        self.llm_timeouts = 0
         started, clock = now(), time.monotonic()
         before = self.llm.usage_summary() if self.llm else None
         run = TriageRun(
@@ -221,6 +223,10 @@ class Triage:
         )
         scanner_cvss = scanner_metrics(findings)
         missing: dict[str, int] = {}
+        # v0.28.0: what each finding cost. `inputs_ms` the CVE's SSVC inputs, paid by the first
+        # finding of the CVE (the others find them computed; an LLM estimate is in it); `decide_ms`
+        # the decision on this asset; `llm_ms` and `llm` below, the rationale.
+        phase = time.perf_counter()
         for finding in findings:
             record = records.get(finding.cve_id)
             if record is None:
@@ -229,8 +235,14 @@ class Triage:
             asset = assets.get(finding.asset_ref)
             if asset is None:
                 raise ValueError(f"finding {finding.id} refers to an unknown asset {finding.asset_ref!r}")
+            t0 = time.perf_counter()
             inputs = self.cve_inputs(record, scanner_cvss.get(finding.cve_id))
-            run.rows.append(self._row(profile, inputs, asset, finding))
+            t1 = time.perf_counter()
+            row = self._row(profile, inputs, asset, finding)
+            row.timing = {"inputs_ms": _ms(t1 - t0), "decide_ms": _ms(time.perf_counter() - t1), "llm_ms": 0.0}
+            row.timing["llm"] = "off" if not self.llm else "not asked"
+            run.rows.append(row)
+        decide_seconds = time.perf_counter() - phase
         run.ignored = [e for e in run.errors if e.get("error") == REJECTED]
         run.errors = [e for e in run.errors if e.get("error") != REJECTED]
         known = {e["cve"] for e in run.errors} | {e["cve"] for e in run.ignored}
@@ -239,14 +251,17 @@ class Triage:
                 run.errors.append({"cve": cve, "error": f"no vulnerability record for {n} finding(s)"})
 
         run.assets = [run_asset(a) for a in sorted(assets.values(), key=lambda a: a.id)]
+        phase = time.perf_counter()
         self._llm_rationales(run.rows)
+        rationale_seconds = time.perf_counter() - phase
         order = {"ACT": 0, "ATTEND": 1, "TRACK": 2}
         run.rows.sort(key=lambda r: (order[r.delivery_decision], -(r.epss or 0), r.cve_id, r.asset_id))
         if self.llm and before is not None:
             after = self.llm.usage_summary()
             run.llm_usage = {
-                k: (round(after[k] - before[k], 1) if k == "seconds" else after[k] - before[k])
+                k: (round(after[k] - before[k], 1) if k.endswith("seconds") else after[k] - before[k])
                 for k in ("questions", "from_cache", "prompt_tokens", "completion_tokens", "seconds")
+                + ("failed", "timeouts", "failed_seconds")
             }
             run.llm_usage.update({k: after[k] for k in ("thinking", "family", "reasoning")})
             if self.llm_stopped:
@@ -259,6 +274,10 @@ class Triage:
             "decided": len(run.rows),
             "without_record": sum(missing.values()),
             "not_affected": len(run.not_affected),
+            # v0.28.0: where the time went, and the findings that cost most
+            "phases": {"decisions": round(decide_seconds, 1), "rationales": round(rationale_seconds, 1)},
+            "llm_timeouts": self.llm_timeouts,
+            "slowest": slowest(run.rows),
         }
         return run
 
@@ -387,20 +406,30 @@ class Triage:
 
         pending = sorted(groups.items(), key=urgency)
         width = max(1, self.settings.llm.parallel)
+        # v0.28.0: a window rather than batches. A batch waited for its slowest question (a timeout,
+        # three minutes) before the next one started; now a free place is given to the next group
+        # at once, and each group's own time is kept on its findings.
+        running: dict[Future, tuple[tuple[str, str], list[TriageRow]]] = {}
         with ThreadPoolExecutor(max_workers=width) as pool:
-            while pending:
-                batch = []
-                while pending and len(batch) < width and self._llm_ready():
+            while pending or running:
+                while pending and len(running) < width and self._llm_ready():
                     self.llm_calls += 1
-                    batch.append(pending.pop(0))
-                if not batch:
+                    item = pending.pop(0)
+                    running[pool.submit(self._timed_rationale, item)] = item
+                if not running:
                     break
-                for (_key, rs), (text, source) in zip(batch, pool.map(self._group_rationale, batch), strict=True):
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    _key, rs = running.pop(future)
+                    text, source, seconds, cached = future.result()
                     if source.startswith("template (LLM error"):
                         self._llm_failed(source)
                     else:
                         self._llm_ok()
+                    outcome = _outcome(source, cached)
                     for r in rs:
+                        r.timing["llm_ms"] = _ms(seconds)
+                        r.timing["llm"] = outcome
                         if source.startswith("llm"):
                             r.rationale = text
                             r.rationale_source = source + (f", {len(rs)} assets" if len(rs) > 1 else "")
@@ -409,6 +438,13 @@ class Triage:
         for _key, rs in pending:  # left over: budget reached or LLM down
             for r in rs:
                 r.rationale_source = f"template ({self.llm_stopped})"
+                r.timing["llm"] = "budget" if "budget" in (self.llm_stopped or "") else "stopped"
+
+    def _timed_rationale(self, item: tuple[tuple[str, str], list[TriageRow]]) -> tuple[str, str, float, bool]:
+        started = time.perf_counter()
+        text, source = self._group_rationale(item)
+        cached = bool(self.llm) and getattr(self.llm, "last_from_cache", lambda: False)()
+        return text, source, time.perf_counter() - started, cached
 
     def _group_rationale(self, item: tuple[tuple[str, str], list[TriageRow]]) -> tuple[str, str]:
         _key, rs = item
@@ -429,8 +465,37 @@ class Triage:
 
     def _llm_failed(self, exc: object) -> None:
         self.llm_errors_in_row += 1
-        if self.llm_errors_in_row >= self.settings.llm.max_consecutive_errors:
+        if "timed out" in str(exc):
+            self.llm_timeouts += 1
+            if self.llm_timeouts >= self.settings.llm.max_timeouts and not self.llm_stopped:
+                self.llm_stopped = f"LLM left aside after {self.llm_timeouts} questions not answered in time"
+        if self.llm_errors_in_row >= self.settings.llm.max_consecutive_errors and not self.llm_stopped:
             self.llm_stopped = f"LLM down after {self.llm_errors_in_row} errors: {exc}"
+
+
+def _ms(seconds: float) -> float:
+    return round(seconds * 1000, 1)
+
+
+def _outcome(source: str, cached: bool) -> str:
+    """What the rationale of a finding cost (v0.28.0): cache, llm, timeout, rejected, error."""
+    if source.startswith("llm"):
+        return "cache" if cached else "llm"
+    if "timed out" in source:
+        return "timeout"
+    if "rejected" in source:
+        return "rejected"
+    return "error"
+
+
+def slowest(rows: list[TriageRow], count: int = 10) -> list[dict[str, Any]]:
+    """The findings that cost most (v0.28.0), all their times added."""
+
+    def total(r: TriageRow) -> float:
+        return sum(v for k, v in r.timing.items() if k.endswith("_ms"))
+
+    top = sorted(rows, key=total, reverse=True)[:count]
+    return [{"cve": r.cve_id, "asset": r.asset_id, "ms": round(total(r), 1), **r.timing} for r in top]
 
 
 CPE_PARTS = {"a": "application", "o": "os", "h": "hardware"}
