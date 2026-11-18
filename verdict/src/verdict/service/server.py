@@ -331,8 +331,9 @@ class Service:
                 if found is None and kind == "cves":
                     raise Problem(
                         HTTPStatus.NOT_FOUND,
-                        "no asset of the tenant is concerned by this CVE in this run: not detected on any asset, "
-                        "and no asset has the product in a version outside the range",
+                        "this CVE is in no decision of this run: not detected on any asset of the run, and no "
+                        "asset has the product in a version outside the range; a CVE newer than the run is not "
+                        "in it either, so this alone does not say the tenant is not concerned",
                     )
                 if found is None:
                     raise Problem(HTTPStatus.NOT_FOUND, f"no such {kind[:-1]} in this run")

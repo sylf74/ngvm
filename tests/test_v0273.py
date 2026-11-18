@@ -378,7 +378,7 @@ def test_the_rationale_is_said_in_english_where_it_is() -> None:
 
 def test_documented_in_the_hld_and_the_layout() -> None:
     hld = (ROOT / "docs/hld/00-product-strategy.md").read_text(encoding="utf-8")
-    assert "| v0.27.3 (current) |" in hld and "| v0.27.2 |" in hld
+    assert re.search(r"\| v0\.27\.3( \(current\))? \|", hld) and "| v0.27.2 |" in hld
     assert "refuses to start rather than answer from an empty tenant" in hld
     assert "| `deploy/k8s/` |" in (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     doc = KUBERNETES.read_text(encoding="utf-8")

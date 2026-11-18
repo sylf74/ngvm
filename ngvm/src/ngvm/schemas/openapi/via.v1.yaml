@@ -105,11 +105,71 @@ paths:
                 events: {type: array, items: {$ref: "#/components/schemas/Event"}}
                 files:
                   type: object
-                  description: index.json and, for each alert, <id>.md, <id>.html and its Word file; base64
+                  description: >-
+                    index.json and, for each alert, <id>.md, <id>.html and its Word file; base64. With a
+                    `passage`, those staged before by watch/runs/{passage}/files count too (since v0.27.4)
                   additionalProperties: {type: string, contentEncoding: base64}
+                passage:
+                  type: string
+                  pattern: "^[A-Za-z0-9][A-Za-z0-9-]{7,63}$"
+                  description: >-
+                    The passage's own name (since v0.27.4): its staged files are taken, and a passage sent
+                    again once recorded is answered with what was kept, `replayed: true`, and not recorded twice
       responses:
-        "202": {description: Kept, content: {application/json: {schema: {type: object}}}}
+        "202":
+          description: Kept
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run: {type: [string, "null"]}
+                  alerts: {type: integer}
+                  events: {type: integer}
+                  passage: {type: string}
+                  replayed: {type: boolean}
         "401": {$ref: "#/components/responses/Problem"}
+        "413": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+  /v1/tenants/{tenant}/watch/runs/{passage}/files:
+    post:
+      tags: [jobs]
+      operationId: stageWatchFiles
+      summary: >-
+        A batch of the files of a passage not recorded yet (since v0.27.4): kept until the passage is
+        sent with the same `passage`, removed after a day if it never is. A passage too big for one body
+        was refused whole and could never be recorded. In all, at most 20 times the largest body
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/tenant"
+        - {name: passage, in: path, required: true, schema: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9-]{7,63}$"}}
+        - name: Content-Encoding
+          in: header
+          required: false
+          schema: {type: string, enum: [gzip]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files: {type: object, additionalProperties: {type: string, contentEncoding: base64}}
+      responses:
+        "202":
+          description: "Staged (or, for a passage already recorded, `recorded: true` and nothing staged)"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passage: {type: string}
+                  staged: {type: integer}
+                  recorded: {type: boolean}
+        "401": {$ref: "#/components/responses/Problem"}
+        "413": {$ref: "#/components/responses/Problem"}
         "422": {$ref: "#/components/responses/Problem"}
   /v1/tenants/{tenant}/events:
     post:

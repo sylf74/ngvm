@@ -47,6 +47,12 @@ context (`--max-model-len`) takes the rest.
 | Gemma 4 26B MoE (`google/gemma-4-…`) | United States | MoE 26B, 3.8B active | In 4 bits, short context | Yes |
 | `Qwen/Qwen3-14B` (AWQ) | China | dense 14B | Yes | Yes |
 
+The context matters for the chat more than for the triage: every question carries the definitions of
+the tools offered and the answers already given (`docs/chat.md` §9a). On a 16 GiB card the KV cache
+in 8 bits (`--kv-cache-dtype fp8`) takes half the room, which may allow `--max-model-len 32768` where
+16384 was the most; vLLM says at start whether it fits (`Maximum concurrency for 32768 tokens per
+request` at 1 or more), else it refuses to start and a smaller length is the answer.
+
 The analysts' chat (Open WebUI, `docs/chat.md`) calls tools: vLLM must be started with the tool
 parser of the family. The flags below are those of the vLLM recipes at the time of writing: check
 them against the recipe of the vLLM version deployed.

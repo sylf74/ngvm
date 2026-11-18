@@ -8,6 +8,10 @@
   <root>/<tenant>/edits/<alert id>.md        the English reference as a validator enriched it (review page)
   <root>/<tenant>/translations/<alert id>.<lang>.md, .json   a translation of the reference and its
                                              metadata (source, reference hash, who edited it)
+  <root>/<tenant>/staging/<passage>/         the files of a passage sent in batches, until it is
+                                             recorded (v0.27.4); removed after a day if it never is
+  <root>/<tenant>/passages.json              the passages recorded and what was kept, so that a
+                                             passage sent again is answered, not recorded twice
   <root>/<tenant>/alerts-log.jsonl           the journal of the alerts (drafted, analysts, edited,
                                              validated, dismissed, sent, send-failed)
   <root>/<tenant>/applications.json          the applications table (v0.23.3, `ngvm.applications`):
@@ -38,6 +42,11 @@ from via.alert import journal
 RUN_ID = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
 FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,150}$")
 ALERT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,150}$")
+# A passage of the watch named by the watch itself (v0.27.4), so that its files can come in batches
+# and a passage sent twice is recorded once.
+PASSAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{7,63}$")
+STAGING_HOURS = 24  # files of a passage never recorded are removed after this
+PASSAGE_DAYS = 2  # a passage recorded is remembered this long: long enough for a retry
 WATCH_FINDINGS_FILE = "watch-findings.json"  # ngvm.watch_findings/1 (v0.23.19)
 INVENTORY_FILES = ("assets.json", "findings.json", WATCH_FINDINGS_FILE)
 STATUSES = ("pending", "translating", "validated", "dismissed", "sent", "failed")
@@ -135,16 +144,31 @@ class WatchStore:
 
     # -- watch runs ------------------------------------------------------------------------------
     def put_run(
-        self, tenant: str, state: bytes, events: list[dict], files: dict[str, bytes], now: dt.datetime | None = None
+        self,
+        tenant: str,
+        state: bytes,
+        events: list[dict],
+        files: dict[str, bytes],
+        now: dt.datetime | None = None,
+        passage: str | None = None,
     ) -> dict[str, Any]:
         """One passage of the watch: its new state, its journal events and, when it drafted alerts,
-        their files (index.json and the sheets)."""
+        their files (index.json and the sheets), with those it staged before in batches (v0.27.4)."""
         now = now or _now()
         rid = f"{now.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
         with self._lock:
-            index = json.loads(files["index.json"]) if "index.json" in files else []
+            staging = self._staging(tenant, passage) if passage else None
+            index_bytes = files.get("index.json")
+            if index_bytes is None and staging is not None and (staging / "index.json").is_file():
+                index_bytes = (staging / "index.json").read_bytes()
+            index = json.loads(index_bytes) if index_bytes else []
             if index:
                 run_dir = self._t(tenant) / "runs" / rid
+                run_dir.mkdir(parents=True, exist_ok=True)
+                if staging is not None and staging.is_dir():
+                    for staged in staging.iterdir():
+                        if FILE_NAME.match(staged.name) and staged.name not in files:
+                            os.replace(staged, run_dir / staged.name)  # moved, never read whole
                 for name, data in files.items():
                     _atomic(run_dir / name, data)
                 _atomic(
@@ -153,8 +177,53 @@ class WatchStore:
             _atomic(self._t(tenant) / "state.json", state)
             if events:
                 journal.append(self._t(tenant) / "alerts-log.jsonl", events)
+            out = {"run": rid if index else None, "alerts": len(index), "events": len(events)}
+            if passage:
+                out["passage"] = passage
+                if staging is not None:
+                    shutil.rmtree(staging, ignore_errors=True)
+                recorded = self._passages(tenant)
+                recorded[passage] = {"at": now.isoformat(), "result": out}
+                _atomic(self._t(tenant) / "passages.json", json.dumps(recorded).encode())
             self._prune(tenant, now)
-        return {"run": rid if index else None, "alerts": len(index), "events": len(events)}
+        return out
+
+    # -- a passage in batches (v0.27.4) ------------------------------------------------------------
+    def _staging(self, tenant: str, passage: str) -> Path:
+        if not PASSAGE.match(passage):
+            raise ValueError("passage: 8 to 64 letters, digits and dashes")
+        return self._t(tenant) / "staging" / passage
+
+    def _passages(self, tenant: str) -> dict[str, Any]:
+        path = self._t(tenant) / "passages.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except ValueError:
+            data = {}
+        return data if isinstance(data, dict) else {}
+
+    def passage(self, tenant: str, passage: str) -> dict[str, Any] | None:
+        """What a passage already recorded kept (answered again to a passage sent twice), or None."""
+        found = self._passages(tenant).get(passage)
+        return found.get("result") if isinstance(found, dict) else None
+
+    def stage_files(self, tenant: str, passage: str, files: dict[str, bytes]) -> None:
+        """Files of a passage not recorded yet, kept until it is (one batch at a time)."""
+        with self._lock:
+            staging = self._staging(tenant, passage)
+            for name, data in files.items():
+                _atomic(staging / name, data)
+
+    def staged(self, tenant: str, passage: str) -> dict[str, int]:
+        """The files staged for a passage and their sizes."""
+        staging = self._staging(tenant, passage)
+        if not staging.is_dir():
+            return {}
+        return {f.name: f.stat().st_size for f in staging.iterdir() if FILE_NAME.match(f.name)}
+
+    def staged_file(self, tenant: str, passage: str, name: str) -> bytes | None:
+        path = self._staging(tenant, passage) / name
+        return path.read_bytes() if FILE_NAME.match(name) and path.is_file() else None
 
     def add_events(self, tenant: str, events: list[dict]) -> int:
         with self._lock:
@@ -168,6 +237,17 @@ class WatchStore:
             for d in runs.iterdir():
                 if RUN_ID.match(d.name) and d.name < cutoff:
                     shutil.rmtree(d, ignore_errors=True)
+        staging = self._t(tenant) / "staging"
+        if staging.exists():
+            limit = now.timestamp() - STAGING_HOURS * 3600
+            for d in staging.iterdir():
+                if d.is_dir() and d.stat().st_mtime < limit:
+                    shutil.rmtree(d, ignore_errors=True)
+        recorded = self._passages(tenant)
+        since = (now - dt.timedelta(days=PASSAGE_DAYS)).isoformat()
+        kept = {k: v for k, v in recorded.items() if isinstance(v, dict) and str(v.get("at", "")) >= since}
+        if len(kept) != len(recorded):
+            _atomic(self._t(tenant) / "passages.json", json.dumps(kept).encode())
 
     def runs(self, tenant: str) -> list[str]:
         """Ids of the runs kept that drafted alerts, newest first."""

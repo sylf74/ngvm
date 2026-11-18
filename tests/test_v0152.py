@@ -166,7 +166,8 @@ def test_are_we_concerned_by_a_cve(triage, tmp_path):  # noqa: F811
     assert hit["concerned"] is True and "updated" in hit and "kev_date_added" in hit
     with pytest.raises(Problem) as p:
         service.read(run.client.id, READ, "cves/CVE-1999-0001", {})
-    assert p.value.status == 404 and "no asset of the tenant is concerned" in p.value.detail
+    assert p.value.status == 404 and "in no decision of this run" in p.value.detail
+    assert "does not say the tenant is not concerned" in p.value.detail  # v0.27.4
 
 
 def test_the_tools_answer_the_daily_questions(tools):  # noqa: F811

@@ -261,6 +261,7 @@ def test_contract_names_the_calls_the_service_answers():
         "/v1/tenants/{tenant}/applications/proposals",
         "/v1/tenants/{tenant}/watch/state",
         "/v1/tenants/{tenant}/watch/runs",
+        "/v1/tenants/{tenant}/watch/runs/{passage}/files",  # v0.27.4
         "/v1/tenants/{tenant}/events",
         "/v1/tenants/{tenant}/alerts",
         "/v1/tenants/{tenant}/alerts/{alert}",

@@ -1,4 +1,4 @@
-# Operator's manual (v0.27.3)
+# Operator's manual (v0.27.4)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -310,6 +310,9 @@ shows an asset, with its scans since v0.18.1, even when it has no finding.
 | Watch: `inventory none yet` | The daily run has not pushed its inventory to the watch service (step `inventory`; needs `NGVM_RUN_MODE: kubernetes`) | The log of the step `inventory` of the last daily run; it warns, and says what the watch keeps (since v0.23.19), when the service cannot be reached or refuses it |
 | Services restart two or three times after `NGVM_DATABASE=true` | They wait for the database's secret while the cluster initialises | None: they settle within two minutes |
 | A service in `CrashLoopBackOff`, its log: "the tables of … are not isolated by tenant … refusing to start" (v0.27.3) | A table of its schema is not kept to one tenant: usually a database restored from a dump made before v0.25.0 (policies testing the setting of the older name); up to v0.27.2 the services saw an empty tenant without a word | Repair once, as the database's superuser, then restart: `docs/kubernetes.md` §5.1 |
+| The chat: "This model's maximum context length is 16384 tokens …" | The tools' definitions (about 10,000 tokens for all of them) and their answers fill a small context | `NGVM_CHAT_TOOLS=core` and `NGVM_CHAT_MAX_CHARS=4000` on the project (v0.27.4), or a larger `--max-model-len` for the model: `docs/chat.md` §9a |
+| The chat says a CVE does not concern the tenant, published after the daily run | Before v0.27.4, `get_cve` read « not in the run » as « not concerned » | v0.27.4: the answer says `newer_than_run`; meanwhile `list_alerts` and `list_new_cves` |
+| Watch log: "POST /watch/runs refused (413)", the same alerts drafted again at each passage | Before v0.27.4, a passage that drafted many alerts did not fit in one body and was never recorded | v0.27.4 sends its files in batches; before, raise `NGVM_WATCH_MAX_MB` |
 | `deploy-k8s`: "ERROR NGVM_INTEL_URL points at the service … which does not exist" (v0.27.3) | The variable names a Service of the cluster that is not there (a typo, a namespace or a release renamed); the same for the relay, the LLM and the reporting addresses | Correct the variable (`kubectl -n <ns> get services` lists those there), then deploy again; nothing was changed |
 | `deploy-k8s`: "the CloudNativePG operator is not installed" | `NGVM_DATABASE=true` without the operator: the cluster's API answered, without `postgresql.cnpg.io` (before v0.23.19, also a failed discovery) | `deploy/cnpg/README.md` |
 | `deploy-k8s`: "the cluster's API did not answer the discovery through the agent … 3 times" (v0.23.19) | The GitLab agent's tunnel failed three times in a row; the `WARN` lines above give `kubectl`'s error | Run the pipeline again; if it lasts, the agent's pod (`kubectl -n gitlab-agent get pods`) and its log |

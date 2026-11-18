@@ -10,6 +10,8 @@
   via.edits          the English reference as a validator enriched it
   via.translations   a translation of the reference and its metadata
   via.applications   the applications table (v0.23.3): one row per application and the CPE it is
+  via.staged         the files of a passage sent in batches, until it is recorded (v0.27.4)
+  via.passages       the passages recorded and what was kept: a passage sent twice is answered
 
 A passage of the watch (state, journal events, files) is written in one transaction, so several
 replicas of the service never see half of one.
@@ -27,7 +29,19 @@ from ngvm import applications as apps
 from ngvm.db import Database, Migration, rls
 from via.alert import journal
 
-from .store import ALERT_ID, FILE_NAME, INVENTORY_FILES, LANG, RUN_ID, T, WatchStore, _now
+from .store import (
+    ALERT_ID,
+    FILE_NAME,
+    INVENTORY_FILES,
+    LANG,
+    PASSAGE,
+    PASSAGE_DAYS,
+    RUN_ID,
+    STAGING_HOURS,
+    T,
+    WatchStore,
+    _now,
+)
 
 MIGRATIONS = [
     Migration(
@@ -101,6 +115,28 @@ CREATE TABLE via.applications (
 );
 """
         + rls("via.applications"),
+    ),
+    Migration(
+        3,
+        """
+CREATE TABLE via.staged (
+    tenant text NOT NULL,
+    passage text NOT NULL,
+    name text NOT NULL,
+    data bytea NOT NULL,
+    at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, passage, name)
+);
+CREATE TABLE via.passages (
+    tenant text NOT NULL,
+    passage text NOT NULL,
+    result jsonb NOT NULL,
+    at timestamptz NOT NULL,
+    PRIMARY KEY (tenant, passage)
+);
+"""
+        + rls("via.staged")
+        + rls("via.passages"),
     ),
 ]
 
@@ -206,17 +242,36 @@ class PgWatchStore(WatchStore):
         )
 
     def put_run(
-        self, tenant: str, state: bytes, events: list[dict], files: dict[str, bytes], now: dt.datetime | None = None
+        self,
+        tenant: str,
+        state: bytes,
+        events: list[dict],
+        files: dict[str, bytes],
+        now: dt.datetime | None = None,
+        passage: str | None = None,
     ) -> dict[str, Any]:
         now = now or _now()
         rid = f"{now.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
-        index = json.loads(files["index.json"]) if "index.json" in files else []
         with self.db.tx(tenant) as conn:
+            index_bytes = files.get("index.json")
+            if index_bytes is None and passage:
+                row = conn.execute(
+                    "SELECT data FROM via.staged WHERE tenant = %s AND passage = %s AND name = 'index.json'",
+                    (tenant, passage),
+                ).fetchone()
+                index_bytes = bytes(row[0]) if row else None
+            index = json.loads(index_bytes) if index_bytes else []
             if index:
                 conn.execute(
                     "INSERT INTO via.runs (tenant, id, at, alerts) VALUES (%s, %s, %s, %s)",
                     (tenant, rid, now, len(index)),
                 )
+                if passage:  # the staged files go to the run in the database, never through memory
+                    conn.execute(
+                        "INSERT INTO via.files (tenant, run, name, data) SELECT tenant, %s, name, data "
+                        "FROM via.staged WHERE tenant = %s AND passage = %s AND NOT (name = ANY(%s))",
+                        (rid, tenant, passage, list(files)),
+                    )
                 with conn.cursor() as cur:
                     cur.executemany(
                         "INSERT INTO via.files (tenant, run, name, data) VALUES (%s, %s, %s, %s)",
@@ -231,7 +286,58 @@ class PgWatchStore(WatchStore):
             conn.execute(
                 "DELETE FROM via.runs WHERE tenant = %s AND at < %s", (tenant, now - dt.timedelta(days=self.keep_days))
             )
-        return {"run": rid if index else None, "alerts": len(index), "events": len(events)}
+            out: dict[str, Any] = {"run": rid if index else None, "alerts": len(index), "events": len(events)}
+            if passage:
+                out["passage"] = passage
+                conn.execute("DELETE FROM via.staged WHERE tenant = %s AND passage = %s", (tenant, passage))
+                conn.execute(
+                    "INSERT INTO via.passages (tenant, passage, result, at) VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (tenant, passage) DO NOTHING",
+                    (tenant, passage, json.dumps(out), now),
+                )
+            conn.execute(
+                "DELETE FROM via.staged WHERE tenant = %s AND at < %s",
+                (tenant, now - dt.timedelta(hours=STAGING_HOURS)),
+            )
+            conn.execute(
+                "DELETE FROM via.passages WHERE tenant = %s AND at < %s",
+                (tenant, now - dt.timedelta(days=PASSAGE_DAYS)),
+            )
+        return out
+
+    # -- a passage in batches (v0.27.4) ------------------------------------------------------------
+    def passage(self, tenant: str, passage: str) -> dict[str, Any] | None:
+        with self.db.tx(tenant) as conn:
+            row = conn.execute(
+                "SELECT result FROM via.passages WHERE tenant = %s AND passage = %s", (tenant, passage)
+            ).fetchone()
+        return row[0] if row else None
+
+    def stage_files(self, tenant: str, passage: str, files: dict[str, bytes]) -> None:
+        if not PASSAGE.match(passage):
+            raise ValueError("passage: 8 to 64 letters, digits and dashes")
+        with self.db.tx(tenant) as conn, conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO via.staged (tenant, passage, name, data) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (tenant, passage, name) DO UPDATE SET data = EXCLUDED.data, at = now()",
+                [(tenant, passage, name, data) for name, data in files.items()],
+            )
+
+    def staged(self, tenant: str, passage: str) -> dict[str, int]:
+        with self.db.tx(tenant) as conn:
+            rows = conn.execute(
+                "SELECT name, octet_length(data) FROM via.staged WHERE tenant = %s AND passage = %s",
+                (tenant, passage),
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
+    def staged_file(self, tenant: str, passage: str, name: str) -> bytes | None:
+        with self.db.tx(tenant) as conn:
+            row = conn.execute(
+                "SELECT data FROM via.staged WHERE tenant = %s AND passage = %s AND name = %s",
+                (tenant, passage, name),
+            ).fetchone()
+        return bytes(row[0]) if row else None
 
     def add_events(self, tenant: str, events: list[dict]) -> int:
         with self.db.tx(tenant) as conn:

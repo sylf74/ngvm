@@ -128,6 +128,13 @@ def cmd_tools(args: argparse.Namespace) -> int:
         return 2
     print(f"{args.tenant}: journal {'in the database' if audit.db else 'in the log only'}, "
           f"actions {'on' if actions else 'off (no database)'}", flush=True)  # fmt: skip
+    from .tools import offered as offered_tools
+
+    try:
+        offered = offered_tools(args.tools)
+    except ValueError as exc:
+        print(f"--tools: {exc}", file=sys.stderr)
+        return 2
     tools = Tools(
         args.tenant,
         tokens,
@@ -150,11 +157,13 @@ def cmd_tools(args: argparse.Namespace) -> int:
         daily_schedule=args.daily_schedule,
         daily_timezone=args.daily_timezone,
         timezone=args.timezone,
+        tools=offered,
     )
     print(
         f"{args.tenant}: tool server on {args.verdict_url}, "
         f"chat token {'set' if 'chat' in tokens.digests else 'MISSING'}, "
-        f"answers up to {args.max_chars} characters",
+        f"answers up to {args.max_chars} characters, "
+        f"{len(tools.spec['paths'])} tool(s) offered",
         flush=True,
     )
     httpd = serve(tools, args.host, args.port)
@@ -220,6 +229,7 @@ def main(argv: list[str]) -> int:
     t.add_argument("--daily-timezone", default="UTC", help="its time zone")
     t.add_argument("--detect-token-file", default="", help="read token of the detection service")
     t.add_argument("--timezone", default="Europe/Paris", help="time zone of the days and times the chat asks")
+    t.add_argument("--tools", default="", help="tools offered: all (default), core, or names comma-separated (v0.27.4)")
     t.add_argument("--host", default="0.0.0.0")  # noqa: S104 - in a pod
     t.add_argument("--port", type=int, default=8080)
     t.set_defaults(func=cmd_tools)

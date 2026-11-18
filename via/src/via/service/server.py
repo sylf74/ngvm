@@ -31,7 +31,7 @@ from ngvm.io import ExchangeError, validate_assets, validate_findings, validate_
 from ngvm.service import JsonHandler, Problem, TokenSet, moment, release_memory
 from ngvm.service import serve as _serve
 
-from .store import ALERT_ID, FILE_NAME, INVENTORY_FILES, STATUSES, WATCH_FINDINGS_FILE, WatchStore
+from .store import ALERT_ID, FILE_NAME, INVENTORY_FILES, PASSAGE, STATUSES, WATCH_FINDINGS_FILE, WatchStore
 
 log = logging.getLogger("via.serve")
 ROLES = {"run", "read"}
@@ -39,6 +39,9 @@ ROUTE = re.compile(r"^/v1/tenants/(?P<tenant>[a-z0-9][a-z0-9-]{0,62})/(?P<rest>.
 CLIENT = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 EVENTS = {"drafted", "analysts", "sent", "send-failed"}
 SHEET_MAX = 20000  # characters of a sheet given to a reader
+# The files a passage may stage in batches, in all (v0.27.4), as a multiple of the largest body: a
+# passage is not refused for its size any more, but a broken watch cannot fill the volume either.
+STAGED_BODIES = 20
 
 
 def _run_key(when: Any) -> str:
@@ -238,34 +241,80 @@ class WatchService:
             raise Problem(HTTPStatus.NOT_FOUND, "no state yet: the next watch records the baseline")
         return data
 
-    def put_run(self, tenant: str, token: str | None, body: bytes, gzipped: bool) -> dict[str, Any]:
-        self._check(tenant, token, ("run",))
-        doc = self._json(body, gzipped)
-        if not isinstance(doc, dict) or not isinstance(doc.get("state"), dict):
-            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "expected {state, events, files}")
-        events = self._events(doc.get("events", []))
+    @staticmethod
+    def _files(raw: Any) -> dict[str, bytes]:
+        if not isinstance(raw, dict):
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "files: an object of file names and base64")
         files: dict[str, bytes] = {}
-        for name, b64 in (doc.get("files") or {}).items():
+        for name, b64 in raw.items():
             if not FILE_NAME.match(name) or name == "meta.json":
                 raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, f"files: {name!r} is not a file name")
             try:
                 files[name] = base64.b64decode(b64, validate=True)
             except (binascii.Error, TypeError) as exc:
                 raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, f"files: {name} is not base64") from exc
-        if files:
+        return files
+
+    @staticmethod
+    def _passage(value: Any) -> str:
+        if not isinstance(value, str) or not PASSAGE.match(value):
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "passage: 8 to 64 letters, digits and dashes")
+        return value
+
+    def stage_files(self, tenant: str, token: str | None, passage: str, body: bytes, gzipped: bool) -> dict:
+        """A batch of the files of a passage not recorded yet (v0.27.4): kept until the passage is."""
+        self._check(tenant, token, ("run",))
+        passage = self._passage(passage)
+        if self.store.passage(tenant, passage) is not None:
+            return {"passage": passage, "recorded": True, "staged": 0}  # sent again after it was recorded
+        doc = self._json(body, gzipped)
+        files = self._files(doc.get("files") if isinstance(doc, dict) else None)
+        held = self.store.staged(tenant, passage)
+        total = sum(v for k, v in held.items() if k not in files) + sum(len(v) for v in files.values())
+        if total > STAGED_BODIES * self.max_bytes:
+            raise Problem(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                f"passage {passage}: more than {STAGED_BODIES} times {self.max_bytes} bytes of files",
+            )
+        self.store.stage_files(tenant, passage, files)
+        log.info("watch tenant=%s passage=%s staged=%d files", tenant, passage, len(files))
+        return {"passage": passage, "staged": len(set(held) | set(files))}
+
+    def put_run(self, tenant: str, token: str | None, body: bytes, gzipped: bool) -> dict[str, Any]:
+        self._check(tenant, token, ("run",))
+        doc = self._json(body, gzipped)
+        if not isinstance(doc, dict) or not isinstance(doc.get("state"), dict):
+            raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "expected {state, events, files}")
+        passage = self._passage(doc["passage"]) if doc.get("passage") is not None else None
+        if passage is not None:  # a passage sent twice (a retry after a timeout) is recorded once
+            done = self.store.passage(tenant, passage)
+            if done is not None:
+                log.info("watch tenant=%s passage=%s already recorded", tenant, passage)
+                return {**done, "replayed": True}
+        events = self._events(doc.get("events", []))
+        files = self._files(doc.get("files") or {})
+        staged = self.store.staged(tenant, passage) if passage else {}
+        names = set(files) | set(staged)
+        if names:
+            raw_index = files.get("index.json")
+            if raw_index is None and "index.json" in staged and passage:
+                raw_index = self.store.staged_file(tenant, passage, "index.json")
             try:
-                index = json.loads(files.get("index.json", b"[]"))
+                index = json.loads(raw_index or b"[]")
             except ValueError as exc:
                 raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "files: index.json is not JSON") from exc
             if not isinstance(index, list) or not all(
                 isinstance(a, dict) and ALERT_ID.match(str(a.get("id", ""))) for a in index
             ):
                 raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, "files: index.json, a list of alerts with their id")
-            missing = [n for a in index for n in WatchStore.files_of(a) if n not in files]
+            missing = [n for a in index for n in WatchStore.files_of(a) if n not in names]
             if missing:
                 raise Problem(HTTPStatus.UNPROCESSABLE_ENTITY, f"files: missing {', '.join(missing[:5])}")
-        out = self.store.put_run(tenant, json.dumps(doc["state"]).encode(), events, files)
-        log.info("watch tenant=%s run=%s alerts=%d events=%d", tenant, out["run"], out["alerts"], out["events"])
+        out = self.store.put_run(tenant, json.dumps(doc["state"]).encode(), events, files, passage=passage)
+        log.info(
+            "watch tenant=%s run=%s alerts=%d events=%d staged=%d",
+            tenant, out["run"], out["alerts"], out["events"], len(staged),
+        )  # fmt: skip
         return out
 
     def add_events(self, tenant: str, token: str | None, body: bytes, gzipped: bool) -> dict[str, Any]:
@@ -451,6 +500,8 @@ def make_handler(service: WatchService) -> type[JsonHandler]:
                     out = service.put_inventory(tenant, token, body, gz)
                 elif rest == "watch/runs":
                     out = service.put_run(tenant, token, body, gz)
+                elif rest.startswith("watch/runs/") and rest.endswith("/files") and rest.count("/") == 3:
+                    out = service.stage_files(tenant, token, unquote(rest.split("/")[2]), body, gz)
                 elif rest == "events":
                     out = service.add_events(tenant, token, body, gz)
                 elif rest == "applications/proposals":

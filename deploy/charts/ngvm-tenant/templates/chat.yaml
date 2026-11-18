@@ -78,6 +78,9 @@ spec:
             - --read-token-file=/secrets/verdict-read-token
             - --digests=/tools-secret/digests
             - --max-chars={{ $chat.maxChars }}
+            {{- if $chat.offeredTools }}
+            - --tools={{ $chat.offeredTools }}
+            {{- end }}
             - --public-url={{ printf "https://%s" $chat.host }}
             - --export-minutes={{ $chat.exportMinutes }}
             {{- if .Values.watch.enabled }}
