@@ -5,6 +5,41 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.4 — 2026-11-18
+
+The chat never concludes without knowing, and a passage of the watch is never too big.
+
+- **`get_cve` says why a CVE is in no decision**: asked about a CVE published at 05:50, after the run
+  of 05:45, the chat answered that it did not concern the tenant. The decision service's 404 said
+  « no asset is concerned » and the tool's description told the model so; it only meant that the run
+  did not carry the CVE. The tool now asks the shared intelligence service and answers a `state`:
+  `newer_than_run` (the run could not see it: the watch's alerts say more, the next run decides),
+  `not_detected_at_run` (known then, on no asset the scanners and the declared inventory see),
+  `unknown_to_ngvm` (no record: not published, withheld or not collected) or `rejected`, with `why`
+  and the run it compares with. `concerned` stays null unless it is known; the service's 404 no longer
+  says « not concerned ».
+- **The tools a tenant offers its chat** (`NGVM_CHAT_TOOLS`): Open WebUI sends every tool's definition
+  with every question, about 10,000 tokens for the 29 of them, and two answers then went over a
+  context of 16k (`maximum context length is 16384 tokens`). `core` offers the dozen of the daily
+  questions (about 4,300 tokens); names can be added (`core,list_chokepoints`). A tool left out
+  answers that it is not offered; an unknown name stops the tool server at start. `export_decisions`
+  now refers to the filters of `search_decisions` instead of repeating them. Sizing: `docs/chat.md`
+  §9a; a model's context: `docs/llm.md` §2.
+- **A passage of the watch in batches**: a passage that drafted many alerts was refused whole (413)
+  and, its state never saved, seen again at every passage. The passage is now named; when its files
+  do not fit in one body they go first in batches of 8 MB (`POST watch/runs/{passage}/files`), staged
+  on the volume or in the tenant's database, and are moved to the run when the passage comes, in its
+  transaction. A passage sent again once recorded (a retry after a timeout) is answered with what was
+  kept and not recorded twice. Staged files never claimed go after a day; a passage may stage at most
+  20 times the largest body (`NGVM_WATCH_MAX_MB`). The contract `via.v1` gains a field and a route; a
+  watch of this version facing an older service sends the passage whole, as before.
+- **Backlog**: the portal's sign-in with any Keycloak set up by the platform, as decided (HLD §11).
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.4`. With the
+tenant's database, the watch service adds two tables at start (`via.staged`, `via.passages`, under
+row-level security). With a model of a 16k context, set `NGVM_CHAT_TOOLS=core` and
+`NGVM_CHAT_MAX_CHARS=4000` on the project.
+
 ## v0.27.3 — 2026-11-18
 
 Refuse rather than stay silent: the reliability lot of the first days of the platform.

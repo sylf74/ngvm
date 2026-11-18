@@ -16,6 +16,8 @@ NetworkPolicy. Endpoints given by name are resolved here, in the job, to their a
     NGVM_CHAT_RETENTION_DAYS        optional: chats unchanged for longer are deleted (default 30, 0: kept)
     NGVM_CHAT_MAX_CHARS             optional: longest tool answer, characters of JSON (default 8000, about
                                     2,000 tokens; 4000 for a model with a 16k context)
+    NGVM_CHAT_TOOLS                 optional: the tools offered, `core` (the dozen of the daily questions,
+                                    for a model of a 16k context) or names comma-separated (v0.27.4)
     NGVM_CHAT_FORWARD_USER_INFO     optional: false keeps the user out of the headers Open WebUI sends to
                                     the tools and the LLM (default true, v0.23.11)
     NGVM_CHAT_INGRESS_CONTROLLER, NGVM_CHAT_INGRESS_CLASS, NGVM_CHAT_TLS_SECRET,
@@ -100,6 +102,12 @@ def values(env: dict[str, str]) -> dict:
         if not 1000 <= chars <= 100000:
             raise ValueError("NGVM_CHAT_MAX_CHARS: 1000 to 100000 characters")
         chat["maxChars"] = chars
+    tools = _list(env.get("NGVM_CHAT_TOOLS", ""))
+    if tools:
+        bad = [t for t in tools if not re.fullmatch(r"[a-z][a-z_]{2,40}", t)]
+        if bad:
+            raise ValueError(f"NGVM_CHAT_TOOLS: core, all, or tool names (get_cve, ...), not {bad[0]!r}")
+        chat["offeredTools"] = ",".join(tools)  # the names are checked by the tool server, which knows them
     forward = env.get("NGVM_CHAT_FORWARD_USER_INFO", "").strip().lower()
     if forward:
         if forward not in ("true", "false"):

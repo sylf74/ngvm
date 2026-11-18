@@ -4,14 +4,20 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import gzip
 import json
+import os
+import secrets
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 TIMEOUT = 120.0
+# The files of a passage go in batches of this many bytes (v0.27.4, NGVM_WATCH_BATCH_MB): a passage
+# that drafted many alerts was refused whole (413) and could never be recorded.
+BATCH_BYTES = 8 * 1024 * 1024
 
 
 class ServiceError(RuntimeError):
@@ -91,14 +97,34 @@ class WatchClient:
     def put_proposals(self, proposals: list[dict[str, Any]]) -> dict[str, Any]:
         return self._call("POST", "/applications/proposals", {"proposals": proposals}).json()
 
-    def put_run(self, state: dict, events: list[dict], alerts_dir: Path | None) -> dict[str, Any]:
-        files: dict[str, str] = {}
+    def put_run(
+        self, state: dict, events: list[dict], alerts_dir: Path | None, batch_bytes: int | None = None
+    ) -> dict[str, Any]:
+        """The passage: its state, events and alerts' files. The files go in batches first when they do
+        not fit in one body (v0.27.4); the passage is named, so that sending it again records it once."""
+        batch = batch_bytes or _batch_bytes()
+        names: list[str] = []
         if alerts_dir and (alerts_dir / "index.json").exists():
             index = json.loads((alerts_dir / "index.json").read_text(encoding="utf-8"))
             if index:
-                names = {"index.json"} | {n for a in index for n in _files_of(a)}
-                files = {n: base64.b64encode((alerts_dir / n).read_bytes()).decode() for n in sorted(names)}
-        return self._call("POST", "/watch/runs", {"state": state, "events": events, "files": files}).json()
+                names = sorted({"index.json"} | {n for a in index for n in _files_of(a)})
+        passage = f"{dt.datetime.now(dt.UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(6)}"
+        sizes = {n: (alerts_dir / n).stat().st_size for n in names} if alerts_dir else {}
+        inline = names
+        if sum(sizes.values()) > batch:
+            batches = _batches(sizes, batch)
+            try:
+                for group in batches:
+                    files = {n: base64.b64encode((alerts_dir / n).read_bytes()).decode() for n in group}
+                    self._call("POST", f"/watch/runs/{passage}/files", {"files": files})
+                inline = []
+            except ServiceError as exc:
+                if "(404)" not in str(exc):
+                    raise
+                inline = names  # a service before v0.27.4: the passage whole, as before
+        files = {n: base64.b64encode((alerts_dir / n).read_bytes()).decode() for n in inline} if inline else {}
+        body = {"state": state, "events": events, "files": files, "passage": passage}
+        return self._call("POST", "/watch/runs", body).json()
 
     # -- the daily run -------------------------------------------------------------------------
     def put_inventory(self, assets: dict, findings: dict) -> dict[str, Any]:
@@ -154,3 +180,27 @@ def _files_of(entry: dict[str, Any]) -> list[str]:
         names.append(entry["docx"])
     names += [n for n in (entry.get("ctx") or {}).values() if isinstance(n, str)]
     return names
+
+
+def _batch_bytes() -> int:
+    """NGVM_WATCH_BATCH_MB (1 to 64), else 8 MB of files per batch."""
+    raw = os.environ.get("NGVM_WATCH_BATCH_MB", "").strip()
+    if raw.isdigit() and 1 <= int(raw) <= 64:
+        return int(raw) * 1024 * 1024
+    return BATCH_BYTES
+
+
+def _batches(sizes: dict[str, int], limit: int) -> list[list[str]]:
+    """The files in groups of at most `limit` bytes, in name order; a file larger than that alone."""
+    out: list[list[str]] = []
+    group: list[str] = []
+    size = 0
+    for name in sorted(sizes):
+        if group and size + sizes[name] > limit:
+            out.append(group)
+            group, size = [], 0
+        group.append(name)
+        size += sizes[name]
+    if group:
+        out.append(group)
+    return out

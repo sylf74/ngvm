@@ -160,7 +160,9 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
         "Is the tenant concerned by a CVE? The CVE as the run knows it (description, CVSS, EPSS, KEV, SSVC "
         "inputs, fixes, dates: published, last updated, added to KEV, KEV due date, EPSS day), the assets it "
         "concerns (paged) and the assets that have the product in a version outside the vulnerable range "
-        "(not_affected). A 404 means no asset of the tenant is concerned.",
+        "(not_affected). A CVE in no decision of the run comes with `state`: newer_than_run (the run could not "
+        "see it: check list_alerts), not_detected_at_run, unknown_to_ngvm or rejected, and `why`. Only "
+        "`concerned: false` means not concerned; `concerned: null` means no conclusion — say so.",
         [_p("cve", "CVE id, e.g. CVE-2024-3094"), *_PAGE, _RUN],
         "cves/{cve}",
     ),
@@ -200,7 +202,8 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
         "it to the analyst as is.",
         [
             _q("format", "string", "docx (Word), pptx (PowerPoint) or csv (table)", enum=["docx", "pptx", "csv"]),
-            *[q for q in _SEARCH if q["name"] not in ("limit", "offset")],
+            # the filters of search_decisions, said once there (v0.27.4: the chat's context is small)
+            *[{**q, "description": "as in search_decisions"} for q in _SEARCH if q["name"] not in ("limit", "offset")],
             _q(
                 "max",
                 "integer",
@@ -571,9 +574,52 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
 POST = {"actions:propose"}  # the operations that change something: a request, never an action run (v0.23.10)
 
 
-def openapi(tenant: str) -> dict[str, Any]:
+# The tools a model of a small context is given (v0.27.4, NGVM_CHAT_TOOLS=core): the daily questions —
+# the run and its decisions, a CVE, an asset and its fixes, what changed, the watch's alerts and the
+# CVEs of a period, where the run is. Every tool's definition goes with every question: 29 of them take
+# about 10,000 tokens, most of a 16k context before the first answer.
+CORE = (
+    "get_run_summary",
+    "search_decisions",
+    "get_decision",
+    "get_cve",
+    "list_assets",
+    "get_asset",
+    "get_fix_plan",
+    "what_changed",
+    "list_alerts",
+    "list_new_cves",
+    "get_watch_status",
+    "get_run_progress",
+)
+
+
+def tool_names() -> list[str]:
+    return [op for _p, op, _s, _q, _u in OPERATIONS]
+
+
+def offered(value: str | None) -> frozenset[str] | None:
+    """The tools a tenant offers its chat: None (all), `core`, or names comma-separated (and `core`).
+    An unknown name is an error, so that a typo does not silently take a tool away."""
+    names = [n.strip() for n in re.split(r"[,;\s]+", value or "") if n.strip()]
+    if not names or names == ["all"]:
+        return None
+    known, out = set(tool_names()), set()
+    for n in names:
+        if n == "core":
+            out.update(CORE)
+        elif n in known:
+            out.add(n)
+        else:
+            raise ValueError(f"unknown tool {n!r}: core, all, or names among {', '.join(sorted(known))}")
+    return frozenset(out)
+
+
+def openapi(tenant: str, only: frozenset[str] | None = None) -> dict[str, Any]:
     paths: dict[str, Any] = {}
     for path, op_id, summary, params, upstream in OPERATIONS:
+        if only is not None and op_id not in only:
+            continue
         paths[path] = {
             ("post" if upstream in POST else "get"): {
                 "operationId": op_id,
@@ -601,6 +647,18 @@ def openapi(tenant: str) -> dict[str, Any]:
         },
         "paths": paths,
     }
+
+
+def _when(value: Any) -> dt.datetime | None:
+    """A moment of a record or a run (ISO 8601, `Z` or an offset, or a bare day) in UTC, or None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        moment_ = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment_ if moment_.tzinfo else moment_.replace(tzinfo=dt.UTC)
 
 
 def _clean(text: str) -> str:
@@ -696,9 +754,11 @@ class Tools:
         review_url: str = "",
         daily_schedule: str = "",
         daily_timezone: str = "UTC",
+        tools: frozenset[str] | None = None,
     ):
         self.tenant = tenant
         self.timezone = timezone
+        self.offered = tools  # v0.27.4, NGVM_CHAT_TOOLS: None offers every tool
         self._intel = (
             httpx.Client(
                 base_url=intel_url.rstrip("/"),
@@ -751,9 +811,11 @@ class Tools:
         self._progress_lock = threading.Lock()
         self.tokens = tokens
         self.max_chars = max_chars
-        self.spec = openapi(tenant)
+        self.spec = openapi(tenant, tools)
         self._routes = [
-            (re.compile("^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", p) + "$"), up) for p, _, _, _, up in OPERATIONS
+            (re.compile("^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", p) + "$"), up)
+            for p, op, _, _, up in OPERATIONS
+            if tools is None or op in tools
         ]
         self._http = httpx.Client(
             base_url=verdict_url.rstrip("/"),
@@ -839,8 +901,106 @@ class Tools:
             if upstream.startswith("via:"):
                 return self._alerts(upstream[4:].format(**{k: quote(v, safe="") for k, v in ids.items()}), query)
             target = upstream.format(**{k: quote(v, safe=":@") for k, v in ids.items()})
+            if upstream == "cves/{cve}":
+                return self._cve(target, ids["cve"].upper(), query)
             return self._get(target, query)
+        hidden = next((op for p, op, _s, _q, _u in OPERATIONS if self._match(p, path)), None)
+        if hidden is not None:
+            raise Problem(HTTPStatus.NOT_FOUND, f"{hidden} is not offered to this tenant's chat (NGVM_CHAT_TOOLS)")
         raise Problem(HTTPStatus.NOT_FOUND, "no such tool")
+
+    def _cve(self, target: str, cve: str, query: dict[str, str]) -> Any:
+        """get_cve (v0.27.4): a CVE in no decision of the run is not, for all that, a CVE that does not
+        concern the tenant. The run may predate it, or NGVM may not know it: the shared intelligence
+        service says which, and the answer says so instead of an error the chat would read as « not
+        concerned »."""
+        try:
+            return self._get(target, query)
+        except Problem as problem:
+            if problem.status != HTTPStatus.NOT_FOUND:
+                raise
+        run = self._run_ref(query.get("run", "latest"))
+        answer: dict[str, Any] = {"cve": cve, "concerned": None, "in_run": False, "run": run}
+        record, unknown = self._record(cve)
+        run_at = _when(run.get("generated_at", ""))
+        if record is None and unknown is None:
+            answer["state"] = "not_in_run"
+            answer["why"] = (
+                "no decision of this run carries this CVE, and the shared intelligence service could not be "
+                "asked whether it is newer than the run: no conclusion on whether the tenant is concerned"
+            )
+        elif record is None:
+            answer["state"] = "unknown_to_ngvm"
+            answer["why"] = (
+                f"NGVM has no record of this CVE ({unknown}): not published yet, withheld, or not collected; "
+                "no conclusion on whether the tenant is concerned"
+            )
+        else:
+            published, updated = _when(record.get("published", "")), _when(record.get("updated", ""))
+            answer.update(
+                {
+                    "published": record.get("published") or None,
+                    "updated": record.get("updated") or None,
+                    "record_state": record.get("state") or None,
+                    "title": (record.get("description") or "")[:300],
+                    "products": [
+                        {k: a.get(k) for k in ("vendor", "product") if a.get(k)}
+                        for a in (record.get("affected") or [])[:10]
+                        if isinstance(a, dict)
+                    ],
+                }
+            )
+            if str(record.get("state", "")).upper() == "REJECTED":
+                answer["state"] = "rejected"
+                answer["concerned"] = False
+                answer["why"] = "the CVE was rejected by its assigner: nothing to fix"
+            elif published and run_at and published > run_at:
+                answer["state"] = "newer_than_run"
+                answer["why"] = (
+                    "published after this run was made: the run could not see it. The watch, which runs "
+                    "every few minutes, says whether it concerns the tenant (list_alerts); the next run decides"
+                )
+            else:
+                answer["state"] = "not_detected_at_run"
+                answer["detected_at_run"] = False
+                answer["why"] = (
+                    "known when this run was made, and no finding of the run carries it: no asset was detected "
+                    "as concerned at that run — detection covers what the scanners and the declared inventory see"
+                )
+                if updated and run_at and updated > run_at:
+                    answer["why"] += "; the record was updated after the run, the next run takes the update"
+        answer["source"] = (
+            "NGVM decision service (the run named in `run`) and shared intelligence service (the CVE record)"
+        )
+        return fit(answer, self.max_chars)
+
+    def _run_ref(self, wanted: str) -> dict[str, Any]:
+        """The id and moment of the run a read names (`latest` or an id), {} when unknown."""
+        runs = self._json(self._http, f"/v1/tenants/{self.tenant}/runs", "decision service").get("items") or []
+        for r in runs:
+            if wanted in ("", "latest") or r.get("id") == wanted:
+                return {"id": r.get("id", ""), "generated_at": r.get("generated_at", "")}
+        return {}
+
+    def _record(self, cve: str) -> tuple[dict[str, Any] | None, str | None]:
+        """The CVE's record from the shared intelligence service: (record, None), (None, why unknown),
+        or (None, None) when the service is not used or does not answer."""
+        if self._intel is None:
+            return None, None
+        try:
+            r = self._intel.post("/v1/records", json={"cves": [cve]})
+            body = r.json() if r.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            return None, None
+        if not isinstance(body, dict):
+            return None, None
+        for record in body.get("records") or []:
+            if isinstance(record, dict) and str(record.get("cve_id", "")).upper() == cve:
+                return record, None
+        for error in body.get("errors") or []:
+            if isinstance(error, dict) and str(error.get("cve", "")).upper() == cve:
+                return None, str(error.get("error") or "no record")[:200]
+        return None, "no record"
 
     def _get(self, target: str, query: dict[str, str]) -> Any:
         try:

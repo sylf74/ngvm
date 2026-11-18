@@ -146,7 +146,7 @@ def test_the_tools_need_the_chat_token_and_answer_short_pages(tools):
         ("/decisions", {"limit": "50"}, 400),
         ("/decisions", {"level": "URGENT"}, 400),
         ("/cves/not-a-cve", {}, 400),
-        ("/cves/CVE-1999-0001", {}, 404),
+        # a CVE in no decision of the run is an answer since v0.27.4 (state, why): tests/test_v0274.py
         ("/decisions/..%2F..%2Fetc", {}, 400),
         ("/delete_everything", {}, 404),
     ],

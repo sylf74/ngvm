@@ -42,6 +42,7 @@ pages (about 2,000 tokens at most) for the model's context.
 | `NGVM_CHAT_ADMIN_EMAIL` | Optional: login of the first admin (default `admin@example.org`) | Visible |
 | `NGVM_CHAT_RETENTION_DAYS` | Optional: chats unchanged for longer are deleted (default 30; 0 keeps them) | Visible |
 | `NGVM_CHAT_MAX_CHARS` | Optional: longest answer of a tool, in characters of JSON (default 8000, about 2,000 tokens). With a model of a 16k context, 4000: a long conversation fills the context with the tools' answers (v0.20.1) | Visible |
+| `NGVM_CHAT_TOOLS` | Optional (v0.27.4): the tools offered to the chat, `core` (the dozen of the daily questions) or tool names comma-separated, `core` included; empty or `all`: every tool. An unknown name stops the tool server at start, its log names it (§9a) | Visible |
 | `NGVM_CHAT_LLM_EGRESS` | Optional: `cidr:port,...` of the LLM endpoints, when the job cannot resolve their names | Visible |
 | `NGVM_CHAT_INGRESS_CONTROLLER`, `NGVM_CHAT_INGRESS_CLASS`, `NGVM_CHAT_TLS_SECRET`, `NGVM_CHAT_CLUSTER_ISSUER` | Optional; default to the `NGVM_INTAKE_*` ones | Visible |
 
@@ -165,6 +166,31 @@ that nothing exists.
 
 `what_changed` needs two runs in the decision service: the day after the first daily run with
 v0.14.0 or later. The dates appear for the runs made with v0.15.2 or later.
+
+## 9a. A model of a small context (v0.27.4)
+
+Open WebUI sends the definition of every tool with every question. The 29 tools take about
+10,000 tokens, each tool answer up to `NGVM_CHAT_MAX_CHARS` characters (8000, about 2,300 tokens),
+and the conversation the rest. With a context of 16k tokens (Qwen3-14B on a 16 GB card) two answers
+of the period's CVEs were enough to go over (`maximum context length is 16384 tokens`).
+
+| Context of the model | `NGVM_CHAT_TOOLS` | `NGVM_CHAT_MAX_CHARS` |
+| --- | --- | --- |
+| 16k | `core` (about 4,300 tokens of definitions) | `4000` |
+| 32k | empty (every tool) or `core` | `4000` to `8000` |
+| 64k and more | empty | `8000` |
+
+`core` is `get_run_summary`, `search_decisions`, `get_decision`, `get_cve`, `list_assets`,
+`get_asset`, `get_fix_plan`, `what_changed`, `list_alerts`, `list_new_cves`, `get_watch_status` and
+`get_run_progress`; add others by name (`core,list_chokepoints`). A tool left out answers that it is
+not offered to this tenant's chat. Raising the model's context is the other way: vLLM's
+`--max-model-len`, with `--kv-cache-dtype fp8` when the card is short of memory (`docs/llm.md`).
+
+`get_cve` on a CVE that is in no decision of the run (v0.27.4) asks the shared intelligence service
+and answers why: `newer_than_run` (the run could not see it: the watch's alerts say more),
+`not_detected_at_run`, `unknown_to_ngvm` or `rejected`; `concerned` is null unless the answer is
+known. Before, the chat read the decision service's 404 as « not concerned », for a CVE published
+after the run.
 
 ## 9. Limits
 

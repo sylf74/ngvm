@@ -218,6 +218,9 @@ chat:
     limits: {memory: 2Gi}
   sessionHours: 8       # analysts sign in again after
   maxChars: 8000        # longest tool answer, in characters (about 2,000 tokens)
+  # The tools offered to the chat (v0.27.4): empty for all of them, `core` for the dozen of the daily
+  # questions (a model of a 16k context), or names comma-separated (docs/chat.md).
+  offeredTools: ""
   exportMinutes: 60     # how long the download link of a document stays valid
   retentionDays: 30     # chats unchanged for longer are deleted (0: kept until a user deletes them)
   tools:
