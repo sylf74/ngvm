@@ -5,6 +5,24 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.28.1 — 2026-11-18
+
+The pages of a large tenant.
+
+- **The pages read the decision service whole**: the pages of the tool server read it through the
+  helper of the chat, which fits an answer to a chat message — every list cut to ten items, a text
+  (`… 15 more`) in place of the rest. The run page of a tenant of ten thousand decisions failed on
+  that text (`Internal Server Error`), and the exposure page drew ten nodes of its graph at most. The
+  pages (`/run`, `/decision`, `/home`, `/exposure`) now read it whole; the chat's answers keep their
+  size. A list cut short is never drawn.
+- **One dashboard address**: one portal holds the reporting database and its Grafana
+  (`deploy/charts/ngvm-portal`): `NGVM_GRAFANA_URL` alone gives the card of the central page;
+  `NGVM_PORTAL_URL`, added by v0.28.0, is gone.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.28.1`; a
+`NGVM_PORTAL_URL` set for v0.28.0 can be deleted. `NGVM_GRAFANA_URL`, the same for every tenant of a
+portal, belongs on the group of the tenants.
+
 ## v0.28.0 — 2026-11-18
 
 The triage measured, decision by decision, and pages to read it.

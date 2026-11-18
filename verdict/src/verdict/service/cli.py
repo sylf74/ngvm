@@ -106,8 +106,7 @@ def cmd_sla_state(args: argparse.Namespace) -> int:
 
 LINK_NOTES = {
     "Chat": "ask the decisions of the run in words",
-    "Reports": "the reports and dashboards of the runs",
-    "Grafana": "the dashboards on the reporting database",
+    "Grafana": "the dashboards of the portal, on the reporting database",
 }
 
 
