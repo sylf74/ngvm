@@ -41,7 +41,7 @@ exit 128
 def test_one_block_for_every_job() -> None:
     text = TEMPLATE.read_text(encoding="utf-8")
     assert text.count("&fetch_ngvm |") == 1 and text.count("- *fetch_ngvm\n") == 2
-    assert 'BASE="${NGVM_SERVER_URL' not in text and "A2VM_SERVER_URL" not in text
+    assert 'BASE="${NGVM_SERVER_URL' not in text and "SERVER_URL:-${" not in text
     assert text.count("git -c advice.detachedHead=false clone") == 1
     jobs = yaml.safe_load(text)
     scripts = [jobs[".ngvm"]["before_script"], jobs["deploy-k8s"]["script"], jobs["send-alerts-k8s"]["script"]]
