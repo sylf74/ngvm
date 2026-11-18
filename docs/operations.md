@@ -1,4 +1,4 @@
-# Operator's manual (v0.27.4)
+# Operator's manual (v0.27.5)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,
@@ -314,6 +314,7 @@ shows an asset, with its scans since v0.18.1, even when it has no finding.
 | The chat says a CVE does not concern the tenant, published after the daily run | Before v0.27.4, `get_cve` read « not in the run » as « not concerned » | v0.27.4: the answer says `newer_than_run`; meanwhile `list_alerts` and `list_new_cves` |
 | Watch log: "POST /watch/runs refused (413)", the same alerts drafted again at each passage | Before v0.27.4, a passage that drafted many alerts did not fit in one body and was never recorded | v0.27.4 sends its files in batches; before, raise `NGVM_WATCH_MAX_MB` |
 | `deploy-k8s`: "ERROR NGVM_INTEL_URL points at the service … which does not exist" (v0.27.3) | The variable names a Service of the cluster that is not there (a typo, a namespace or a release renamed); the same for the relay, the LLM and the reporting addresses | Correct the variable (`kubectl -n <ns> get services` lists those there), then deploy again; nothing was changed |
+| A job: "WARN  NGVM not fetched from …" then "ERROR NGVM v… could not be fetched … by any address" (v0.27.5) | No address answered: the job token not allowed on the code project, `NGVM_REF` not a tag of it, or GitLab not reached from the runner; each `WARN` gives git's reason, without the token | The allowlist of the code project (`docs/deployment.md` §4), the tag, the runner's network; before v0.27.5 a group `NGVM_SERVER_URL` sent the runners of the LAN to the public address (403): remove it |
 | `deploy-k8s`: "the CloudNativePG operator is not installed" | `NGVM_DATABASE=true` without the operator: the cluster's API answered, without `postgresql.cnpg.io` (before v0.23.19, also a failed discovery) | `deploy/cnpg/README.md` |
 | `deploy-k8s`: "the cluster's API did not answer the discovery through the agent … 3 times" (v0.23.19) | The GitLab agent's tunnel failed three times in a row; the `WARN` lines above give `kubectl`'s error | Run the pipeline again; if it lasts, the agent's pod (`kubectl -n gitlab-agent get pods`) and its log |
 | `helm get values` shows no `database` although `NGVM_DATABASE` is set | The job did not see the variable: protected variable on an unprotected branch, wrong name or value | Settings > CI/CD > Variables: `NGVM_DATABASE` = `true`, then run the pipeline again |

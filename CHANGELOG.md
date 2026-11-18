@@ -5,6 +5,28 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.27.5 — 2026-11-18
+
+Every job fetches the code of NGVM by the address its runner already reaches.
+
+- **The address of GitLab taken from `CI_REPOSITORY_URL`**: each job cloned the code of NGVM at
+  `NGVM_SERVER_URL`, else at the address GitLab advertises. A runner outside the LAN needed the
+  variable in its environment, and a `NGVM_SERVER_URL` set on a group for it sent the runners of the
+  LAN to an address they could not reach (403, the job token refused by the reverse proxy). The jobs
+  now try, in this order and the first that answers wins: the address the runner fetched the project
+  from (`CI_REPOSITORY_URL`, without its token, a GitLab under a path kept), `NGVM_SERVER_URL` when
+  set, GitLab's own address. Each try is bounded (60 s), says on a `WARN` line why it failed without
+  the token, and the job says where the code came from (`NGVM v0.27.5 fetched from …`). One block
+  for the three ways a job fetched it (the jobs in Python, `deploy-k8s`, `send-alerts-k8s`).
+- **The GitLab API in a job by the same address**: the artifacts of another project (the external
+  detection, the last inventory) are read at `NGVM_SERVER_URL/api/v4` when it is set (the pods, which
+  the deployment gives it), else at the address of `CI_REPOSITORY_URL`, else at `CI_API_V4_URL`.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.27.5`. A runner
+outside the LAN no longer needs `NGVM_SERVER_URL` in its environment (it may stay); a group variable
+`NGVM_SERVER_URL` is no longer needed and should be removed, the pods getting GitLab's address from
+the deployment.
+
 ## v0.27.4 — 2026-11-18
 
 The chat never concludes without knowing, and a passage of the watch is never too big.

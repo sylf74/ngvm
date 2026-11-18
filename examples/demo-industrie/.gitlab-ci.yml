@@ -3,9 +3,9 @@
 # NGVM_PROJECT to the same path, on the group of the tenants).
 include:
   - project: group/subgroup/ngvm
-    ref: v0.27.4
+    ref: v0.27.5
     file: templates/client-pipeline.yml
 
 variables:
-  NGVM_REF: v0.27.4  # keep equal to the include ref
+  NGVM_REF: v0.27.5  # keep equal to the include ref
   NGVM_RUN_MODE: gitlab   # kubernetes: the daily run and the watch in the cluster (docs/kubernetes.md §4)

@@ -13,7 +13,7 @@
 #
 #     include:
 #       - project: vulnops/ngvm
-#         ref: v0.27.4
+#         ref: v0.27.5
 #         file: templates/client-pipeline.yml
 #     variables:
 #       NGVM_REF: v0.19.0        # same version as the include
@@ -104,10 +104,36 @@ stages: [validate, deploy, collect, via, detect, assets, triage, publish, watch,
     - if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then export GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"; fi
     # GitLab behind a reverse proxy that asks for a client certificate (runner tls-cert-file)
     - if [ -n "${CI_SERVER_TLS_CERT_FILE:-}" ]; then export GIT_SSL_CERT="$CI_SERVER_TLS_CERT_FILE" GIT_SSL_KEY="$CI_SERVER_TLS_KEY_FILE"; fi
-    # A runner outside the LAN reaches GitLab by another URL: NGVM_SERVER_URL in its environment
-    - BASE="${NGVM_SERVER_URL:-${A2VM_SERVER_URL:-${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}:${CI_SERVER_PORT}}}"
-    - git -c advice.detachedHead=false clone -q --depth 1 --branch "$NGVM_REF"
-        "${BASE%%://*}://gitlab-ci-token:${CI_JOB_TOKEN}@${BASE#*://}/${NGVM_PROJECT}.git" .ngvm
+    # The code of NGVM at NGVM_REF (v0.27.5: one way for every job). Tried in this order, the first
+    # that answers wins: the address this runner fetched the project from (CI_REPOSITORY_URL, path
+    # of a GitLab under a path kept: it works for this runner, inside the LAN or out), NGVM_SERVER_URL
+    # when set, GitLab's own address. A runner outside the LAN needs no variable any more; a wrong
+    # NGVM_SERVER_URL on a group no longer stops the runners it does not suit. Each try is bounded
+    # (60 s); no token is printed.
+    - &fetch_ngvm |
+      NGVM_FROM=""
+      TRIED=" "
+      REPO_BASE=""
+      if [ -n "${CI_REPOSITORY_URL:-}" ]; then
+        r="${CI_REPOSITORY_URL#*://}"; r="${r#*@}"
+        case "$r" in *"/${CI_PROJECT_PATH:-}.git") r="${r%/"${CI_PROJECT_PATH}".git}" ;; *) r="${r%%/*}" ;; esac
+        REPO_BASE="${CI_REPOSITORY_URL%%://*}://$r"
+      fi
+      for BASE in "$REPO_BASE" "${NGVM_SERVER_URL:-}" "${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}:${CI_SERVER_PORT}"; do
+        BASE="${BASE%/}"
+        case "$BASE" in ""|*://) continue ;; esac
+        case "$TRIED" in *" $BASE "*) continue ;; esac
+        TRIED="$TRIED$BASE "
+        rm -rf .ngvm
+        if timeout 60 git -c advice.detachedHead=false clone -q --depth 1 --branch "$NGVM_REF" \
+            "${BASE%%://*}://gitlab-ci-token:${CI_JOB_TOKEN}@${BASE#*://}/${NGVM_PROJECT}.git" .ngvm 2> .ngvm-clone.err; then
+          NGVM_FROM="${BASE#*://}"; break
+        fi
+        echo "WARN  NGVM not fetched from ${BASE#*://}: $(tail -n 1 .ngvm-clone.err | sed 's/gitlab-ci-token:[^@]*@//')"
+      done
+      rm -f .ngvm-clone.err
+      if [ -z "$NGVM_FROM" ]; then echo "ERROR NGVM $NGVM_REF could not be fetched from $NGVM_PROJECT by any address (see the WARN lines)"; exit 1; fi
+      echo "NGVM $NGVM_REF fetched from $NGVM_FROM"
     - pip install --quiet .ngvm/ngvm .ngvm/via ".ngvm/detect[openvas,snmp]" .ngvm/verdict
     - if [ -f settings.yaml ]; then export SETTINGS=settings.yaml; else export SETTINGS=.ngvm/config/settings.yaml; fi
     - echo "NGVM $NGVM_REF ($(git -C .ngvm rev-parse --short HEAD)), client $CI_PROJECT_PATH, mode ${NGVM_JOB:-${A2VM_JOB:-daily}}, settings $SETTINGS"
@@ -165,9 +191,7 @@ deploy-k8s:
     - *legacy_variables
     - apk add --no-cache -q git helm kubectl
     - if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then export GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"; fi
-    - BASE="${NGVM_SERVER_URL:-${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}:${CI_SERVER_PORT}}"
-    - git -c advice.detachedHead=false clone -q --depth 1 --branch "$NGVM_REF"
-        "${BASE%%://*}://gitlab-ci-token:${CI_JOB_TOKEN}@${BASE#*://}/${NGVM_PROJECT}.git" .ngvm
+    - *fetch_ngvm
     - kubectl config use-context "$NGVM_K8S_CONTEXT"
     # GitLab behind a private CA: kubectl reaches the cluster through GitLab (File variable).
     - if [ -n "${NGVM_K8S_CA:-}" ]; then kubectl config set-cluster gitlab --certificate-authority="$NGVM_K8S_CA"; fi
@@ -735,9 +759,7 @@ send-alerts-k8s:
     - *legacy_variables
     - apk add --no-cache -q git helm kubectl
     - if [ -n "${CI_SERVER_TLS_CA_FILE:-}" ]; then export GIT_SSL_CAINFO="$CI_SERVER_TLS_CA_FILE"; fi
-    - BASE="${NGVM_SERVER_URL:-${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}:${CI_SERVER_PORT}}"
-    - git -c advice.detachedHead=false clone -q --depth 1 --branch "$NGVM_REF"
-        "${BASE%%://*}://gitlab-ci-token:${CI_JOB_TOKEN}@${BASE#*://}/${NGVM_PROJECT}.git" .ngvm
+    - *fetch_ngvm
     - kubectl config use-context "$NGVM_K8S_CONTEXT"
     - if [ -n "${NGVM_K8S_CA:-}" ]; then kubectl config set-cluster gitlab --certificate-authority="$NGVM_K8S_CA"; fi
     - NS="${NGVM_K8S_NAMESPACE:-ngvm-$(echo "$CI_PROJECT_NAME" | tr 'A-Z_' 'a-z-')}"

@@ -157,12 +157,14 @@ triage with the LLM) stay on the internal runner and get the detection through t
      clone_url = "https://gitlab.example.org"
      tls-cert-file = "/etc/gitlab-runner/certs/scanner.crt"
      tls-key-file = "/etc/gitlab-runner/certs/scanner.key"
-     environment = ["NGVM_SERVER_URL=https://gitlab.example.org"]
      [runners.docker]
        volumes = ["/cache", "greenbone-community-edition_gvmd_socket_vol:/run/gvmd"]
    ```
 
-   `NGVM_SERVER_URL` makes the job fetch the vulnops code by the public URL; the client
+   The job fetches the code of NGVM, and reads the GitLab API, by the address the runner fetched
+   the project from (`clone_url`, since v0.27.5): no `NGVM_SERVER_URL` is needed in the runner's
+   environment (before v0.27.5 it was, `environment = ["NGVM_SERVER_URL=https://gitlab.example.org"]`;
+   it may stay). Never set it on a group: the runners of the LAN would use it too. The client
    certificate is handed to git through `CI_SERVER_TLS_CERT_FILE` and `CI_SERVER_TLS_KEY_FILE`.
 
 2. In the client project, run the collection there and talk to gvmd over the socket:
