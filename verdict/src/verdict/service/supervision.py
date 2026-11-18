@@ -17,6 +17,7 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from . import triagepages
 from .pages import CSP, Safe, badge, card, esc, kpi, moment, shell, size, span, warn
 
 __all__ = ["CSP", "REFRESH", "page"]
@@ -118,15 +119,23 @@ def _triage(p: dict[str, Any]) -> str:
         ("ACT in KEV", kev.get("ACT")),
         ("Flagged for review", p.get("needs_review")),
         ("CVEs read", p.get("cve_count")),
-        ("LLM questions", llm.get("calls") if llm else None),
-        ("from the cache", llm.get("cached") if llm else None),
-        ("LLM tokens", llm.get("tokens") if llm else None),
+        # v0.28.0: the keys of llm_usage (questions, from_cache, tokens); the page read others
+        ("LLM questions", llm.get("questions", llm.get("calls")) if llm else None),
+        ("from the cache", llm.get("from_cache", llm.get("cached")) if llm else None),
+        ("LLM tokens", _tokens(llm) if llm else None),
+        ("LLM questions without an answer", warn(llm["failed"]) if llm.get("failed") else None),
     ]
     sla = p.get("sla") or {}
     overdue = sla.get("overdue") if isinstance(sla, dict) else None
     if overdue:
         rows.append(("Past the client's SLA", warn(overdue)))
     return kpi(rows)
+
+
+def _tokens(llm: dict[str, Any]) -> int | None:
+    if "prompt_tokens" in llm or "completion_tokens" in llm:
+        return int(llm.get("prompt_tokens") or 0) + int(llm.get("completion_tokens") or 0)
+    return llm.get("tokens")
 
 
 def _dispatch(p: dict[str, Any]) -> str:
@@ -185,8 +194,9 @@ def _agents(data: dict[str, Any]) -> str:
     )
 
 
-def page(data: dict[str, Any], review_url: str = "") -> str:
-    """The whole page, from what `Tools._progress_data` gathered."""
+def page(data: dict[str, Any], review_url: str = "", triage: dict[str, Any] | None = None) -> str:
+    """The whole page, from what `Tools._progress_data` gathered; `triage` the SSVC tree the run's
+    decisions walked and the time it took (v0.28.0)."""
     tenant = esc(data.get("tenant", ""))
     run = data.get("run") or {}
     pillars = data.get("pillars") or {}
@@ -196,7 +206,7 @@ def page(data: dict[str, Any], review_url: str = "") -> str:
         f"<span>{esc(STATE_TEXT.get(state, state) or 'no run reported yet')}"
         f"{' · run of ' + moment(run.get('run_started_at')) if run.get('run_started_at') else ''}"
         f" · times in UTC · this page refreshes every {REFRESH} s"
-        " · <a href='/exposure'>exposure paths</a></span>"
+        f" · {triagepages.nav('/run')}</span>"
     )
     cards = "".join(card(title, note, BLOCKS[key](pillars.get(key) or {})) for key, title, note in PILLARS)
     pod = next((s.get("pod") for s in reversed(run.get("steps") or []) if s.get("pod")), "")
@@ -216,6 +226,7 @@ def page(data: dict[str, Any], review_url: str = "") -> str:
     body = (
         f"<h2>The run, step by step</h2>{_chain(run)}{logs}"
         f"<h2>The four pillars</h2><div class='cards'>{cards}</div>"
+        f"{triagepages.run_section(triage or {})}"
         f"{_agents(data)}{link}"
     )
     return shell(f"NGVM run — {tenant}", head, body, footer, refresh=REFRESH)

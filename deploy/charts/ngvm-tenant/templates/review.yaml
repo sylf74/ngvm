@@ -66,10 +66,13 @@ spec:
             - --redirect-url={{ printf "https://%s/oauth2/callback" $r.host }}
             - --upstream={{ printf "http://%s-via:8081/" $name }}
             {{- if .Values.chat.enabled }}
-            # v0.26.2, v0.26.3: the pages of the tool server (the run, the exposure paths); the same
-            # analysts, the same sign-in, one path each (oauth2-proxy routes by the longest path).
+            # v0.26.2, v0.26.3, v0.28.0: the pages of the tool server (the run, the exposure paths,
+            # the decisions, the central page); the same analysts, the same sign-in, one path each
+            # (oauth2-proxy routes by the longest path).
             - --upstream={{ printf "http://%s-tools:8080/run" $name }}
             - --upstream={{ printf "http://%s-tools:8080/exposure" $name }}
+            - --upstream={{ printf "http://%s-tools:8080/decision" $name }}
+            - --upstream={{ printf "http://%s-tools:8080/home" $name }}
             {{- end }}
             - --scope=openid email profile
             - --code-challenge-method=S256

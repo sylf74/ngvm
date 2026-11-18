@@ -153,6 +153,44 @@ paths:
         "400": {$ref: "#/components/responses/Problem"}
         "401": {$ref: "#/components/responses/Problem"}
         "404": {$ref: "#/components/responses/Problem"}
+  /v1/tenants/{tenant}/triage-graph:
+    get:
+      tags: [read]
+      operationId: getTriageGraph
+      summary: >-
+        The SSVC tree as the decisions of the run walked it, and what they cost (since v0.28.0): per
+        decision point the values taken and how many decisions took them, the flows from one point to
+        the next, the paths taken most, and where the triage time went (per part, per outcome of the
+        rationale, the slowest decisions). The values and the times are those the triage recorded;
+        a run made before v0.28.0 carries no time
+      security:
+        - readToken: []
+      parameters:
+        - $ref: "#/components/parameters/tenant"
+        - name: level
+          in: query
+          required: false
+          description: Only these decisions, comma-separated
+          schema: {type: string, example: "ACT,ATTEND"}
+        - name: asset
+          in: query
+          required: false
+          description: Only the decisions of this asset (any of its names)
+          schema: {type: string}
+        - name: needs_review
+          in: query
+          required: false
+          schema: {type: boolean}
+        - $ref: "#/components/parameters/run"
+      responses:
+        "200":
+          description: The tree walked and its time
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TriageGraph"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
   /v1/tenants/{tenant}/progress:
     post:
       tags: [publish]
@@ -593,6 +631,59 @@ components:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
   schemas:
+    TriageGraph:
+      type: object
+      description: The SSVC tree walked by the decisions of a run (since v0.28.0)
+      required: [run, decisions, columns, links, paths, timing]
+      properties:
+        run: {$ref: "#/components/schemas/RunRef"}
+        filters: {type: object}
+        decisions: {type: integer}
+        columns:
+          type: array
+          description: The decision points in their order, each with the values taken
+          items:
+            type: object
+            properties:
+              point: {type: string}
+              label: {type: string}
+              values:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    value: {type: string}
+                    count: {type: integer}
+                    review: {type: integer}
+                    ms: {type: number}
+        links:
+          type: array
+          description: From a value of one point to a value of the next, how many decisions
+          items:
+            type: object
+            properties:
+              from: {type: array, items: {type: string}}
+              to: {type: array, items: {type: string}}
+              count: {type: integer}
+        paths:
+          type: array
+          description: The whole paths taken most (20 at most)
+          items:
+            type: object
+            properties:
+              path: {type: array, items: {type: string}}
+              count: {type: integer}
+              review: {type: integer}
+              ms: {type: number}
+        paths_total: {type: integer}
+        timing:
+          type: object
+          description: >-
+            Where the triage time went: step_seconds, decide_seconds, phases (decisions,
+            rationales), llm (questions, from_cache, seconds, failed, timeouts, failed_seconds),
+            totals_ms (inputs_ms, decide_ms, llm_ms: a rationale counted once for its CVE and
+            decision), rationales (per outcome), decide_ms (p50, p95, max), slowest; measured false
+            and a note for a run made before v0.28.0
     ExposureGraph:
       type: object
       required: [schema, run, level, chokepoints, nodes, edges]

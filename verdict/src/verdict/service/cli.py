@@ -104,6 +104,25 @@ def cmd_sla_state(args: argparse.Namespace) -> int:
     return 0
 
 
+LINK_NOTES = {
+    "Chat": "ask the decisions of the run in words",
+    "Reports": "the reports and dashboards of the runs",
+    "Grafana": "the dashboards on the reporting database",
+}
+
+
+def _links(values: list[str]) -> list[dict[str, str]]:
+    """`name=https://…` pairs of --link (v0.28.0); one that is not an https address is left out."""
+    out = []
+    for value in values:
+        name, _, url = value.partition("=")
+        if name.strip() and url.startswith("https://") and url[8:].strip("/"):
+            out.append({"name": name.strip(), "url": url, "note": LINK_NOTES.get(name.strip(), "")})
+        else:
+            print(f"--link {value!r}: name=https://… expected, left out", file=sys.stderr)
+    return out
+
+
 def cmd_tools(args: argparse.Namespace) -> int:
     from ngvm.service import TokenSet
 
@@ -158,6 +177,7 @@ def cmd_tools(args: argparse.Namespace) -> int:
         daily_timezone=args.daily_timezone,
         timezone=args.timezone,
         tools=offered,
+        links=_links(args.link),
     )
     print(
         f"{args.tenant}: tool server on {args.verdict_url}, "
@@ -230,6 +250,9 @@ def main(argv: list[str]) -> int:
     t.add_argument("--detect-token-file", default="", help="read token of the detection service")
     t.add_argument("--timezone", default="Europe/Paris", help="time zone of the days and times the chat asks")
     t.add_argument("--tools", default="", help="tools offered: all (default), core, or names comma-separated (v0.27.4)")
+    t.add_argument(
+        "--link", action="append", default=[], help="`name=https://…`: a dashboard of the central page (v0.28.0)"
+    )
     t.add_argument("--host", default="0.0.0.0")  # noqa: S104 - in a pod
     t.add_argument("--port", type=int, default=8080)
     t.set_defaults(func=cmd_tools)

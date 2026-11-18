@@ -67,18 +67,58 @@
     },
     "timing": {
       "type": "object",
-      "description": "How long the triage took and on what (since v0.23.18): started_at, ended_at, seconds (since v0.23.19 the whole step, from reading its inputs; decide_seconds the decisions alone); run_started_at and run_seconds (from the start of the daily run to the end of the triage) when the run's start is known; findings (read), decided, without_record, not_affected",
+      "description": "How long the triage took and on what (since v0.23.18): started_at, ended_at, seconds (since v0.23.19 the whole step, from reading its inputs; decide_seconds the decisions alone); run_started_at and run_seconds (from the start of the daily run to the end of the triage) when the run's start is known; findings (read), decided, without_record, not_affected; since v0.28.0 phases (decisions, rationales: seconds), llm_timeouts, slowest (the findings that cost most, with their times)",
       "properties": {
-        "started_at": {"type": "string"},
-        "ended_at": {"type": "string"},
-        "seconds": {"type": "number"},
-        "decide_seconds": {"type": "number"},
-        "run_started_at": {"type": "string"},
-        "run_seconds": {"type": "number"},
-        "findings": {"type": "integer"},
-        "decided": {"type": "integer"},
-        "without_record": {"type": "integer"},
-        "not_affected": {"type": "integer"}
+        "started_at": {
+          "type": "string"
+        },
+        "ended_at": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "number"
+        },
+        "decide_seconds": {
+          "type": "number"
+        },
+        "run_started_at": {
+          "type": "string"
+        },
+        "run_seconds": {
+          "type": "number"
+        },
+        "findings": {
+          "type": "integer"
+        },
+        "decided": {
+          "type": "integer"
+        },
+        "without_record": {
+          "type": "integer"
+        },
+        "not_affected": {
+          "type": "integer"
+        },
+        "phases": {
+          "type": "object",
+          "properties": {
+            "decisions": {
+              "type": "number"
+            },
+            "rationales": {
+              "type": "number"
+            }
+          }
+        },
+        "llm_timeouts": {
+          "type": "integer"
+        },
+        "slowest": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
     "rows": {
@@ -201,6 +241,24 @@
                   "string",
                   "null"
                 ]
+              }
+            }
+          },
+          "timing": {
+            "type": "object",
+            "description": "What deciding this finding cost (since v0.28.0): inputs_ms (the CVE's SSVC inputs, paid by its first finding), decide_ms, llm_ms (its group's rationale), llm (off, not asked, cache, llm, timeout, rejected, error, budget, stopped)",
+            "properties": {
+              "inputs_ms": {
+                "type": "number"
+              },
+              "decide_ms": {
+                "type": "number"
+              },
+              "llm_ms": {
+                "type": "number"
+              },
+              "llm": {
+                "type": "string"
               }
             }
           }

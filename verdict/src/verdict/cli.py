@@ -155,12 +155,29 @@ def main(argv: list[str] | None = None) -> int:
                     f"{u['prompt_tokens']}+{u['completion_tokens']} tokens, {u['seconds']} s, "
                     f"{u['family']}, reasoning {u['reasoning']}"
                 )
+                if u.get("failed"):  # v0.28.0: what the questions without an answer cost
+                    print(
+                        f"  LLM: {u['failed']} question(s) without an answer ({u.get('timeouts', 0)} not answered "
+                        f"in time), {u.get('failed_seconds', 0)} s spent waiting for them"
+                    )
             t = run.timing
             print(
                 f"  timing: {t['findings']} findings read, {t['decided']} decided, {t['without_record']} without a "
                 f"record, in {t['seconds']} s (deciding {t['decide_seconds']} s)"
                 + (f"; {t['run_seconds'] / 60:.0f} min since the start of the run" if "run_seconds" in t else "")
             )
+            phases = t.get("phases") or {}
+            if phases:  # v0.28.0: where the decision time went, and the findings that cost most
+                print(
+                    f"  time: decisions {phases.get('decisions', 0)} s, rationales {phases.get('rationales', 0)} s; "
+                    "per finding in triage.csv (inputs_ms, decide_ms, llm_ms, llm)"
+                )
+                for s in (t.get("slowest") or [])[:5]:
+                    print(
+                        f"  slow: {s['cve']} {s['asset']} {s['ms']:.0f} ms "
+                        f"(inputs {s.get('inputs_ms', 0):.0f}, decision {s.get('decide_ms', 0):.0f}, "
+                        f"rationale {s.get('llm_ms', 0):.0f}, {s.get('llm', '')})"
+                    )
             if triage.llm_stopped:
                 print(f"  LLM not used for the rest of the run: {triage.llm_stopped}", file=sys.stderr)
             for row in llm_failures[:20]:

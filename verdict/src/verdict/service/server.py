@@ -309,6 +309,8 @@ class Service:
                 return idx.components(query)
             if rest == "exposure-graph":  # v0.27.0: the chokepoints of the paths and their graph
                 return idx.exposure_graph(query)
+            if rest == "triage-graph":  # v0.28.0: the SSVC tree walked by the decisions, and its time
+                return idx.triage_graph(query)
             if rest == "coverage":
                 try:
                     return idx.coverage(query)

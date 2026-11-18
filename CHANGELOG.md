@@ -5,6 +5,42 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.28.0 — 2026-11-18
+
+The triage measured, decision by decision, and pages to read it.
+
+- **What each decision cost**: every decision of the triage carries its times — `inputs_ms` (the
+  CVE's SSVC inputs, paid by its first decision), `decide_ms` (the decision on the asset), `llm_ms`
+  (the rationale of the CVE and decision) and `llm` (answered, from the cache, not in time, rejected,
+  budget reached, left aside, not asked, off). They are in `triage.csv`, in the decisions the decision
+  service keeps, and in the step's log: `time:` (decisions, rationales) and the five `slow:` decisions.
+- **An LLM question not answered in time is not asked again**: asked again it waited as long each
+  time, 180 s three times, nine minutes for one rationale, and the triage waited by batches of four
+  for the slowest. A daily run of 27,000 findings spent an hour there while its log said 182 s of LLM:
+  the time of the questions without an answer was counted nowhere. Now each is asked once, their
+  number and the time spent waiting for them are counted (`LLM: … without an answer …`), three
+  questions not answered in time, consecutive or not, leave the LLM aside for the run
+  (`llm.tasks.max_timeouts`; an answer from the cache between two of them no longer hid them), and the
+  rationales go through a window: a free place goes to the next one at once.
+- **The SSVC tree walked by the run** (`GET /v1/tenants/<t>/triage-graph`, read token): per decision
+  point the values taken and their decisions, the flows from one point to the next, the paths taken
+  most, and where the triage time went. Drawn on the run page, in SVG, with no script: one column per
+  point, a band as wide as the decisions that went that way, then the paths and the time, and the ten
+  decisions that cost most.
+- **The page of a decision** (`/decision`): its path drawn over the run's tree, each input with the
+  source of its value, the SSVC outcome and the delivery decision, why it is for review, its rationale
+  and what it cost; a search by CVE, asset, text or decision (the pages' CSP now lets a form go to
+  the page itself, `form-action 'self'`).
+- **The central page** (`/home`): one card for the run, the decisions, the exposure paths and the
+  alerts, with their numbers, and the dashboards: the chat, the reports' portal (`NGVM_PORTAL_URL`),
+  Grafana (`NGVM_GRAFANA_URL`). The pages link to one another.
+- The LLM numbers of the run page's triage card read the keys the triage writes (they were empty).
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.28.0`;
+optionally `NGVM_PORTAL_URL` and `NGVM_GRAFANA_URL`. The new pages are behind the review page's
+sign-in, at `/home` and `/decision` of its host. The first run made in v0.28.0 carries the times; the
+runs before it are drawn without.
+
 ## v0.27.7 — 2026-11-18
 
 A relay of the sources that keeps office hours.

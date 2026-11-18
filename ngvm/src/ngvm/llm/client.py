@@ -56,6 +56,7 @@ class LlmClient:
         )
         self._current = 0
         self._lock = threading.Lock()
+        self._last = threading.local()  # whether this thread's last answer came from the cache (v0.28.0)
         self.cache = LlmCache(settings.cache_file, settings.cache_days) if settings.cache_file else None
         self.family = family_of(settings.model, settings.family)
         self.reasoning = reasoning_of(settings.reasoning, settings.thinking)
@@ -65,7 +66,18 @@ class LlmClient:
             if settings.thinking and not settings.reasoning
             else request_fields(self.family, self.reasoning)
         )
-        self.usage = {"questions": 0, "from_cache": 0, "prompt_tokens": 0, "completion_tokens": 0, "seconds": 0.0}
+        # v0.28.0: the questions that failed and the time spent waiting for them, timeouts apart;
+        # "seconds" stays the time of the answers received.
+        self.usage = {
+            "questions": 0,
+            "from_cache": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "seconds": 0.0,
+            "failed": 0,
+            "timeouts": 0,
+            "failed_seconds": 0.0,
+        }
 
     def _count(self, **values: float) -> None:
         with self._lock:
@@ -77,10 +89,15 @@ class LlmClient:
         with self._lock:
             out = dict(self.usage)
         out["seconds"] = round(out["seconds"], 1)
+        out["failed_seconds"] = round(out["failed_seconds"], 1)
         out["thinking"] = self.settings.thinking or "default"
         out["family"] = self.family
         out["reasoning"] = self.reasoning or "default"
         return out
+
+    def last_from_cache(self) -> bool:
+        """Whether the last question asked by this thread was answered by the cache (v0.28.0)."""
+        return bool(getattr(self._last, "cached", False))
 
     @property
     def model(self) -> str:
@@ -124,6 +141,7 @@ class LlmClient:
         }
         payload.update(self._fields)
         self._count(questions=1)
+        self._last.cached = False
         key = question_key(payload) if self.cache else ""
         if self.cache:
             kept = self.cache.get(key)
@@ -131,10 +149,12 @@ class LlmClient:
                 try:
                     jsonschema.validate(kept, schema)
                     self._count(from_cache=1)
+                    self._last.cached = True
                     return kept
                 except jsonschema.ValidationError:
                     pass  # the schema changed since: ask again
         last_error: Exception | None = None
+        spent = 0.0
         for _ in range(self.settings.max_retries + 1):
             started = time.monotonic()
             try:
@@ -152,6 +172,13 @@ class LlmClient:
                 if self.cache:
                     self.cache.put(key, data)
                 return data
+            except httpx.TimeoutException as exc:
+                # v0.28.0: a question the model did not answer in time is not asked again. Asked
+                # again it waited as long each time (180 s, twice more): nine minutes for one
+                # rationale, with the other questions of its batch waiting for it.
+                spent += time.monotonic() - started
+                self._count(failed=1, timeouts=1, failed_seconds=spent)
+                raise LlmError(f"{name}: timed out after {self.settings.timeout_seconds:g} s") from exc
             except (
                 httpx.HTTPError,
                 KeyError,
@@ -161,7 +188,9 @@ class LlmClient:
                 AttributeError,
                 jsonschema.ValidationError,
             ) as exc:
+                spent += time.monotonic() - started
                 last_error = exc
+        self._count(failed=1, failed_seconds=spent)
         raise LlmError(f"{name}: {last_error}")
 
     def close(self) -> None:

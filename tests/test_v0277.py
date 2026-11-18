@@ -150,7 +150,7 @@ def test_documented() -> None:
     ops = (ROOT / "docs/operations.md").read_text(encoding="utf-8")
     assert 'cannot be reached" (v0.27.7)' in ops and 'KEV additions … not read" (v0.27.7)' in ops
     hld = (ROOT / "docs/hld/00-product-strategy.md").read_text(encoding="utf-8")
-    assert "| v0.27.7 (current) |" in hld
+    assert re.search(r"^\| v0\.27\.7( \(current\))? \|", hld, re.M)
 
 
 def test_release_recorded() -> None:

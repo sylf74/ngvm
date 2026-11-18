@@ -53,6 +53,7 @@ llm:
     max_calls: 300             # per client run; one rationale per CVE and decision, most urgent first
     parallel: 4                # concurrent requests (vLLM serves them together)
     max_consecutive_errors: 3  # then the LLM is treated as down for the rest of the run
+    max_timeouts: 3            # questions not answered in time, consecutive or not, before the same (v0.28.0)
 
 # Product-name similarity (0-1) above which a non-exact match becomes a candidate.
 fuzzy_threshold: 0.75

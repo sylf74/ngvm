@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ngvm import sla
 
-from . import chokepoints
+from . import chokepoints, ssvcgraph
 
 LEVELS = ("ACT", "ATTEND", "TRACK")
 EXPOSURES = ("open", "controlled", "small")
@@ -397,6 +397,27 @@ class RunIndex:
         if offset + limit < len(ordered):
             out["next_offset"] = offset + limit
         return out
+
+    def triage_graph(self, query: dict[str, str]) -> dict[str, Any]:
+        """The SSVC tree as this run's decisions walked it, and what it cost (v0.28.0)."""
+        rows = self.rows
+        if "level" in query:
+            levels = {lv.strip().upper() for lv in query["level"].split(",") if lv.strip()}
+            if not levels or not levels <= set(LEVELS):
+                raise QueryError("level: ACT, ATTEND, TRACK, comma-separated")
+            rows = [r for r in rows if r["delivery_decision"] in levels]
+        if "asset" in query:
+            a = query["asset"].strip().lower()
+            rows = [r for r in rows if a in asset_names(r)]
+        if "needs_review" in query:
+            want = _bool(query["needs_review"], "needs_review")
+            rows = [r for r in rows if bool(r.get("needs_review")) == want]
+        return {
+            "run": self.run,
+            "filters": {k: query[k] for k in ("level", "asset", "needs_review") if k in query},
+            **ssvcgraph.graph(rows),
+            "timing": ssvcgraph.timing(rows, self.document),
+        }
 
     def decision(self, rid: str) -> dict[str, Any] | None:
         row = self.by_id.get(rid)

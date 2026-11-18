@@ -35,7 +35,7 @@ from ngvm.schedule import ScheduleError, next_run
 from ngvm.service import JsonHandler, Problem, TokenSet, moment
 from ngvm.service import serve as _serve
 
-from . import exports, pages, supervision
+from . import exports, pages, supervision, triagepages
 from . import exposure as exposure_page
 
 log = logging.getLogger("verdict.tools")
@@ -727,6 +727,12 @@ def _chain_state(steps: list[dict[str, Any]]) -> str:
     return "done" if states else ""
 
 
+# The pages of the tool server (v0.26.2, v0.26.3, v0.28.0), each with and without its final slash.
+PAGE_PATHS = frozenset(p + s for p in ("/run", "/exposure", "/decision", "/home") for s in ("", "/"))
+SEARCH_FIELDS = ("id", "cve", "asset", "q", "level")
+SEARCH_MAX = 100
+
+
 class Tools:
     """The tool server's logic, free of HTTP (tested directly)."""
 
@@ -755,8 +761,10 @@ class Tools:
         daily_schedule: str = "",
         daily_timezone: str = "UTC",
         tools: frozenset[str] | None = None,
+        links: list[dict[str, str]] | None = None,
     ):
         self.tenant = tenant
+        self.links = list(links or [])  # v0.28.0: the dashboards and the chat, on the central page
         self.timezone = timezone
         self.offered = tools  # v0.27.4, NGVM_CHAT_TOOLS: None offers every tool
         self._intel = (
@@ -1502,7 +1510,73 @@ class Tools:
         this port sees it, and the NetworkPolicy lets only oauth2-proxy and the chat reach it."""
         who = actor or "analyst (not forwarded)"
         self.audit.write(self.tenant, who, "user" if actor else "token", "page:run", "/run", {})
-        return supervision.page(self._progress_data(), self.review_url)
+        return supervision.page(self._progress_data(), self.review_url, self._triage_graph({}))
+
+    # -- the triage, decision by decision (v0.28.0) ---------------------------------------------------
+    def _triage_graph(self, query: dict[str, str]) -> dict[str, Any]:
+        """The SSVC tree walked by the run's decisions; a decision service that cannot say it (an
+        older one, no run yet) leaves the rest of the page as it is."""
+        try:
+            return self._get("triage-graph", query)
+        except Problem as problem:
+            return {"state": problem.detail}
+
+    def decision_page(self, actor: str = "", query: dict[str, str] | None = None) -> str:
+        """One decision and its path through the SSVC tree, or the decisions a search found."""
+        query = {k: (v or "").strip()[:200] for k, v in (query or {}).items() if k in SEARCH_FIELDS and v and v.strip()}
+        who = actor or "analyst (not forwarded)"
+        self.audit.write(self.tenant, who, "user" if actor else "token", "page:decision", "/decision", dict(query))
+        data: dict[str, Any] = {"tenant": self.tenant, "query": query}
+        rid = query.get("id", "")
+        if not rid and query.get("cve") and query.get("asset"):  # a CVE on an asset: one decision, if it is so
+            found = self._get("decisions", {"cve": query["cve"], "asset": query["asset"], "limit": "2"})
+            if found.get("total") == 1:
+                rid = found["items"][0]["id"]
+        if rid:
+            try:
+                data["decision"] = self._get(f"decisions/{quote(rid, safe=':@')}", {})
+            except Problem as problem:
+                if problem.status != HTTPStatus.NOT_FOUND:
+                    raise
+                data["not_found"] = f"no decision {rid} in the last run"
+                return triagepages.decision_page(data)
+            data["graph"] = self._triage_graph({})
+            return triagepages.decision_page(data)
+        search = {k: v for k, v in query.items() if k in ("cve", "asset", "q", "level")}
+        if search:
+            if "level" in search:
+                search["level"] = search["level"].upper()
+            answer = self._get("decisions", {**search, "limit": str(SEARCH_MAX)})
+            data["items"], data["total"] = answer.get("items") or [], answer.get("total", 0)
+        return triagepages.decision_page(data)
+
+    def home_page(self, actor: str = "") -> str:
+        """The central page (v0.28.0): one card for each page and tool of the tenant."""
+        who = actor or "analyst (not forwarded)"
+        self.audit.write(self.tenant, who, "user" if actor else "token", "page:home", "/home", {})
+        progress = self._progress_data()
+        run = progress.get("run") or {}
+        steps = run.get("steps") or []
+        state = run.get("state", "")
+        summary = self._get("summary", {}) if run else {}
+        watch = (progress.get("pillars") or {}).get("watch") or {}
+        data = {
+            "tenant": self.tenant,
+            "run": {
+                "run": run.get("run", ""),
+                "state_text": supervision.STATE_TEXT.get(state, state) or "no run reported yet",
+                "started": pages.moment(run.get("run_started_at") or (steps[0].get("started_at") if steps else "")),
+            },
+            "next_run": pages.moment((progress.get("agents") or {}).get("next_daily_run")) or None,
+            "summary": summary,
+            "watch": {
+                "last_passage": pages.moment(watch.get("last_passage")),
+                "alerts_last_24h": watch.get("alerts_last_24h"),
+            },
+            "review_url": self.review_url,
+            "links": self.links,
+        }
+        return triagepages.home_page(data)
 
     # -- documents ------------------------------------------------------------------------------
     def _raw(self, target: str, query: dict[str, str]) -> dict[str, Any]:
@@ -1636,12 +1710,17 @@ def make_handler(tools: Tools) -> type[JsonHandler]:
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if url.path in ("/run", "/run/", "/exposure", "/exposure/"):  # v0.26.2, v0.26.3: the pages
+            if url.path in PAGE_PATHS:  # v0.26.2, v0.26.3, v0.28.0: the pages
                 try:
+                    query = dict(parse_qsl(url.query))
                     if url.path.startswith("/run"):
                         body = tools.page(self._analyst()).encode("utf-8")
+                    elif url.path.startswith("/decision"):
+                        body = tools.decision_page(self._analyst(), query).encode("utf-8")
+                    elif url.path.startswith("/home"):
+                        body = tools.home_page(self._analyst()).encode("utf-8")
                     else:
-                        body = tools.exposure_page(self._analyst(), dict(parse_qsl(url.query))).encode("utf-8")
+                        body = tools.exposure_page(self._analyst(), query).encode("utf-8")
                 except Problem as problem:  # a service of the tenant did not answer: say so as a page
                     body = pages.message(
                         "NGVM", "<b>NGVM</b><span><a href='/run'>the run</a></span>", problem.detail
