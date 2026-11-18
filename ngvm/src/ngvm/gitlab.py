@@ -11,8 +11,9 @@ Two ways to authenticate, the first available wins:
 - The job token (CI_JOB_TOKEN): GitLab answers with the job of that name in the latest successful
   pipeline of the branch, and nothing when that pipeline has no such job. The source project must
   allow the reading project in Settings > CI/CD > Job token permissions.
- The API is reached at NGVM_SERVER_URL/api/v4 when the runner uses another URL than the
-one GitLab advertises, else at CI_API_V4_URL. The private CA and the client certificate that the
+The API is reached at NGVM_SERVER_URL/api/v4 when it is set (the pods), else, in a job, by the
+address the runner fetched the project from (CI_REPOSITORY_URL, v0.27.5: a runner outside the LAN
+needs no variable), else at CI_API_V4_URL. The private CA and the client certificate that the
 runner hands to the job are honoured.
 """
 
@@ -46,11 +47,31 @@ def _environ(environ: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if environ is None else environ
 
 
+def repository_base(environ: Mapping[str, str]) -> str | None:
+    """The address of GitLab the runner fetched the project from, without the job token.
+
+    `https://gitlab-ci-token:…@gitlab.example.org:8443/git/group/project.git` with the project
+    `group/project` gives `https://gitlab.example.org:8443/git`.
+    """
+    url = environ.get("CI_REPOSITORY_URL", "")
+    if "://" not in url:
+        return None
+    scheme, rest = url.split("://", 1)
+    rest = rest.split("@", 1)[-1]
+    suffix = f"/{environ.get('CI_PROJECT_PATH', '')}.git"
+    under_path = bool(environ.get("CI_PROJECT_PATH")) and rest.endswith(suffix)
+    rest = rest[: -len(suffix)] if under_path else rest.split("/", 1)[0]
+    return f"{scheme}://{rest.rstrip('/')}" if rest else None
+
+
 def api_base(environ: Mapping[str, str] | None = None) -> str:
     source = _environ(environ)
     server = env("SERVER_URL", environ=source)
     if server:
         return server.rstrip("/") + "/api/v4"
+    repository = repository_base(source)
+    if repository:
+        return repository + "/api/v4"
     if source.get("CI_API_V4_URL"):
         return source["CI_API_V4_URL"].rstrip("/")
     raise GitLabError("GitLab API unknown: run in a pipeline (CI_API_V4_URL) or set NGVM_SERVER_URL")

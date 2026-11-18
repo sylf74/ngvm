@@ -83,6 +83,8 @@ git push -u origin main && git push origin --tags
    cannot be moved under the client projects' feet.
 4. **Settings > CI/CD > Job token permissions**: keep "Limit access to this project" on and **add
    the group `vulnops/clients`**: client pipelines may then clone the code with their job token.
+   A job tries the address its runner fetched the client project from (`CI_REPOSITORY_URL`), then
+   `NGVM_SERVER_URL` when set, then GitLab's own address, and logs where the code came from (v0.27.5).
 
 The code project's own pipeline only runs lint, tests and the offline examples.
 
@@ -95,10 +97,10 @@ The code project's own pipeline only runs lint, tests and the offline examples.
 ```yaml
 include:
   - project: vulnops/ngvm
-    ref: v0.27.4
+    ref: v0.27.5
     file: templates/client-pipeline.yml
 variables:
-  NGVM_REF: v0.27.4
+  NGVM_REF: v0.27.5
   NGVM_RUN_MODE: gitlab   # or kubernetes: docs/kubernetes.md §4
 ```
 
@@ -177,7 +179,7 @@ The product is named NGVM since v0.25.0 (formerly A2VM), and its CI/CD variables
 `WARN  CI/CD variable A2VM_<name> is deprecated: rename it NGVM_<name>`. Rename each variable in
 Settings > CI/CD > Variables (group, subgroup, client projects), in the `variables:` section of each
 client `.gitlab-ci.yml`, in the pipeline schedules (`NGVM_JOB=watch`) and in the environment of a
-runner outside the LAN (`NGVM_SERVER_URL`). Exception: the variables the template itself defines
-(`NGVM_REF`, `NGVM_PROJECT`, `NGVM_PROFILE`, `NGVM_TARGETS`, `NGVM_RUNNER_TAG`, `NGVM_COLLECT_TAG`)
-are not copied from their old names: rename them in the client `.gitlab-ci.yml` at the same time as
+runner outside the LAN (`NGVM_SERVER_URL`, no longer needed there since v0.27.5). Exception: the
+variables the template itself defines (`NGVM_REF`, `NGVM_PROJECT`, `NGVM_PROFILE`, `NGVM_TARGETS`,
+`NGVM_RUNNER_TAG`, `NGVM_COLLECT_TAG`) are not copied from their old names: rename them in the client `.gitlab-ci.yml` at the same time as
 the move to v0.25.0. A job without warnings has nothing left to rename.
