@@ -161,7 +161,10 @@ namespace of the cluster) must name one that exists, else the job stops on
 `ERROR NGVM_INTEL_URL points at the service … which does not exist`. An intel URL to a missing
 Service once deployed fine and failed in every passage. Other hosts are outside the cluster and
 left alone; a check the agent may not make (forbidden) is a warning. Only variable names, Services
-and namespaces are printed, never a value.
+and namespaces are printed, never a value. The tenant that serves the shared service
+(`NGVM_INTEL_SERVE: "true"`) creates its `<release>-intel` Service in this very job: an
+`NGVM_INTEL_URL` that names it in the job's namespace is accepted before it exists (v0.28.2; its
+first deployment was refused for the Service it was about to create).
 
 No step of the pipeline runs `kubectl apply` (v0.25.8). A client-side apply reads the cluster's
 OpenAPI schema, and the GitLab agent server refuses to serve it (it accepts JSON, YAML and the

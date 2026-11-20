@@ -23,6 +23,8 @@ from ngvm.models import VulnRecord
 # succeeds is kept, and a batch that fails loses only itself (v0.26.0).
 TIMEOUT = 180.0
 BATCH = 400  # CVE ids per request
+# v0.28.2: a batch that fails no longer ends the request; two in a row say the service is down.
+MAX_FAILED_IN_A_ROW = 2
 
 
 class IntelError(RuntimeError):
@@ -42,6 +44,7 @@ def token_from(path: str) -> str:
 class IntelClient:
     def __init__(self, url: str, token: str, transport: httpx.BaseTransport | None = None, timeout: float = TIMEOUT):
         self.url = url.rstrip("/")
+        self.unanswered: list[str] = []  # the CVE ids of the batches of the last `records` that failed
         self._client = httpx.Client(
             base_url=self.url,
             headers={"Authorization": f"Bearer {token}", "User-Agent": "ngvm-via"},
@@ -81,22 +84,35 @@ class IntelClient:
         self, cve_ids: list[str], packages: bool = False
     ) -> tuple[list[VulnRecord], list[dict[str, str]], list[str]]:
         """(records, errors, notes) for `cve_ids`, in batches; with `packages`, the package advisories
-        of the distributions too (v0.23.0; a service of an older version leaves them out)."""
+        of the distributions too (v0.23.0; a service of an older version leaves them out). The CVE ids
+        of the batches that failed are left in `unanswered` (v0.28.2), for the caller to read them
+        from the sources."""
         records: list[VulnRecord] = []
         errors: list[dict[str, str]] = []
         notes: list[str] = []
+        self.unanswered = []
         batches = range(0, len(cve_ids), BATCH)
+        failed_in_a_row = 0
         for n, i in enumerate(batches, start=1):
-            body: dict[str, Any] = {"cves": cve_ids[i : i + BATCH]}
+            chunk = cve_ids[i : i + BATCH]
+            if failed_in_a_row >= MAX_FAILED_IN_A_ROW:  # the service is down: the rest is not asked
+                self.unanswered += chunk
+                continue
+            body: dict[str, Any] = {"cves": chunk}
             if packages:
                 body["packages"] = True
             try:
                 data = self._call("POST", "/v1/records", json=body)
-            except IntelError as exc:  # v0.26.0: the batches that answered are kept
-                if n == 1:
+            except IntelError as exc:
+                # v0.28.2: the batch is lost alone, the next ones are asked (v0.26.0 stopped here: on
+                # 2026-11-20 a run of 29 batches kept 5, and 58 754 findings had no decision)
+                if n == 1 and len(batches) == 1:
                     raise
-                notes.append(f"intel: batch {n} of {len(batches)} failed ({exc}); {len(records)} records kept")
-                break
+                failed_in_a_row += 1
+                self.unanswered += chunk
+                notes.append(f"WARN intel: batch {n} of {len(batches)} failed ({exc})")
+                continue
+            failed_in_a_row = 0
             try:
                 records += [VulnRecord.from_dict(r) for r in data["records"]]
             except (KeyError, TypeError) as exc:

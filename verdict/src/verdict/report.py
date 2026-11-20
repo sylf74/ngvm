@@ -91,6 +91,8 @@ def write_json(run: TriageRun, path: Path) -> None:
     }
     if run.sla:
         data["sla"] = run.sla
+    if run.undecided:
+        data["undecided"] = sorted(run.undecided)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

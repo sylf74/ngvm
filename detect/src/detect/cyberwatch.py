@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -32,6 +33,7 @@ from ngvm.io import Detection, now
 from ngvm.models import AssetObservation, Finding, FindingObservation, Match
 
 from .collect import MAX_COMPONENTS, component
+from .sbom import library
 
 SOURCE = "cyberwatch"
 CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
@@ -220,6 +222,38 @@ def _kind(value: str) -> str:
     return "win" if any(k in text for k in ("msi", "windows", "kb")) else "application"
 
 
+# v0.28.2: the libraries of a language ecosystem, by a word of Cyberwatch's type of package. They go
+# through OSV with their purl (`detect.osv`), not through the applications table: on 2026-11-20 the
+# table of `lab` held 110 gems and Python packages of Cyberwatch as applications waiting for a CPE.
+ECOSYSTEMS: tuple[tuple[str, str], ...] = (
+    ("gem", "gem"), ("ruby", "gem"), ("pip", "pypi"), ("pypi", "pypi"), ("python", "pypi"), ("npm", "npm"),
+    ("node", "npm"), ("yarn", "npm"), ("maven", "maven"), ("java", "maven"), ("jar", "maven"),
+    ("nuget", "nuget"), ("composer", "composer"), ("php", "composer"), ("cargo", "cargo"),
+    ("crate", "cargo"), ("golang", "golang"), ("gomod", "golang"),
+)  # fmt: skip
+
+
+def _ecosystem(value: str) -> str:
+    """The purl type of a library from Cyberwatch's type of package, or "" (not a library)."""
+    words = re.split(r"[^a-z]+", value.lower())
+    return next((eco for word, eco in ECOSYSTEMS if word in words), "")
+
+
+def _library(name: str, version: str, ecosystem: str) -> dict[str, str] | None:
+    """A library as a component with its purl, or None when its name cannot make one (a Maven
+    artifact without its group)."""
+    if ecosystem == "maven":
+        if ":" not in name:
+            return None
+        group, _, artifact = name.partition(":")
+        rest = f"{quote(group, safe='.-_')}/{quote(artifact, safe='.-_')}"
+    elif ecosystem in ("composer", "golang"):
+        rest = "/".join(quote(part, safe=".-_") for part in name.split("/"))
+    else:
+        rest = quote(name.lower() if ecosystem == "pypi" else name, safe=".-_")
+    return library(name, version, f"pkg:{ecosystem}/{rest}@{quote(version, safe='.-_+~')}", SOURCE)
+
+
 def _components(details: dict[str, Any]) -> list[dict[str, str]]:
     """The packages Cyberwatch lists, else the current versions of its updates."""
     rows = details.get("packages") or [u.get("current") or {} for u in details.get("updates") or []]
@@ -230,7 +264,13 @@ def _components(details: dict[str, Any]) -> list[dict[str, str]]:
         name, version = str(p.get("product") or "").strip(), str(p.get("version") or "").strip()
         if not name or not version:
             continue
-        kind = _kind(str(p.get("type") or ""))
+        kind_text = str(p.get("type") or "")
+        eco = _ecosystem(kind_text)
+        lib = _library(name, version, eco) if eco else None
+        if lib is not None:
+            comps[(name, version)] = lib
+            continue
+        kind = _kind(kind_text)
         comps[(name, version)] = component(name, version, "", kind, "", "", SOURCE, str(p.get("vendor") or "").strip())
     return [comps[k] for k in sorted(comps)][:MAX_COMPONENTS]
 

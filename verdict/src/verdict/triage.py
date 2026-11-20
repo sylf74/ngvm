@@ -231,6 +231,7 @@ class Triage:
             record = records.get(finding.cve_id)
             if record is None:
                 missing[finding.cve_id] = missing.get(finding.cve_id, 0) + 1
+                run.undecided.append(finding.id)  # v0.28.2: still detected, not to be closed
                 continue
             asset = assets.get(finding.asset_ref)
             if asset is None:

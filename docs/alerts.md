@@ -16,6 +16,9 @@ every 10 min   the sources of config/watch-sources.yaml, in three categories:
                - the publication (or the CVE record) names a declared product or a watchlist entry
                - the client's last daily inventory found the CVE on one of its hosts
                - a CVE already alerted in the last 14 days is skipped, unless it becomes KEV
+               - five information alerts or more on one product and the same assets, only possibly
+                 concerned, in one passage are one alert with every CVE (v0.28.2: a burst of the
+                 Linux kernel's CNA made 150 mails in three hours)
       v
                alert sheet (English reference, team layout): why now and from which source, table of the
                assets concerned, CVE, product, type, CVSS, main impact, exploitation status, fixes,

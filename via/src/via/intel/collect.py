@@ -95,10 +95,28 @@ def collect_shared(sources: Sources, cve_ids: list[str], transport=None, package
     assert client is not None
     try:
         records, errors, notes = client.records(cve_ids, packages=packages)
+        unanswered = list(client.unanswered)
     finally:
         client.close()
     out = Collection(requested=list(cve_ids), records=records, errors=errors, notes=notes)
     out.notes.append(f"intel: {len(records)}/{len(cve_ids)} records from the shared service")
+    if unanswered:
+        # v0.28.2: the CVEs of the batches lost are read from the sources, as when the service is down
+        if not sources.settings.intel_fallback:
+            out.notes.append(
+                f"WARN intel: {len(unanswered)} CVEs of failed batches not read (intel_fallback false): "
+                "their findings get no decision in this run"
+            )
+            out.errors += [{"cve": c, "error": "shared service batch failed"} for c in unanswered]
+            return out
+        direct = collect_direct(sources, unanswered, packages=packages)
+        out.records += direct.records
+        out.errors += direct.errors
+        out.notes += direct.notes
+        out.notes.append(
+            f"WARN intel: {len(unanswered)} CVEs of failed batches read from the sources directly: "
+            f"{len(direct.records)} records"
+        )
     return out
 
 

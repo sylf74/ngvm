@@ -40,6 +40,7 @@ is a proposal only.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, replace
 from typing import Any
@@ -49,6 +50,8 @@ from .matching import cpe_vendor_product, norm
 from .models import AffectedEntry, VulnRecord
 from .packages import PACKAGE_TYPES, Exposure
 from .versions import _cmp, evaluate, version_key
+
+log = logging.getLogger(__name__)
 
 NEW, PROPOSED, VALIDATED, REJECTED = "new", "proposed", "validated", "rejected"
 STATES = (NEW, PROPOSED, VALIDATED, REJECTED)
@@ -138,11 +141,18 @@ class Row:
     last_seen: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if v not in (None, "", [])} | {"state": self.state}
+        """The row without its empty fields, except those it is read back with (v0.28.2): a source
+        that gives no publisher (Cyberwatch) wrote rows `from_dict` could not read again."""
+        out = {k: v for k, v in self.__dict__.items() if v not in (None, "", [])}
+        return out | {"key": self.key, "vendor": self.vendor, "name": self.name, "state": self.state}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Row:
         known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
+        if not isinstance(known.get("key"), str) or not known["key"]:
+            raise ValueError(f"application without a key: {str(data)[:80]}")
+        known.setdefault("vendor", "")  # rows written before v0.28.2 by a source without publisher
+        known.setdefault("name", known["key"])
         row = cls(**known)
         if row.state not in STATES:
             raise ValueError(f"application {row.key!r}: unknown state {row.state!r}")
@@ -157,12 +167,22 @@ class Row:
         return ""
 
 
-def load_table(data: Any) -> dict[str, Row]:
-    """The table from its JSON form ({"applications": [...]}), or from a list of rows."""
+def load_table(data: Any, skipped: list[str] | None = None) -> dict[str, Row]:
+    """The table from its JSON form ({"applications": [...]}), or from a list of rows.
+
+    A row that cannot be read is left out, said in `skipped` and in the log (v0.28.2): one bad row
+    used to make the whole table unreadable, and with it every passage of the watch."""
     rows = data.get("applications", []) if isinstance(data, dict) else (data or [])
     out = {}
     for item in rows:
-        row = Row.from_dict(item)
+        try:
+            row = Row.from_dict(item)
+        except (TypeError, ValueError, AttributeError) as exc:
+            note = f"application row left out: {exc}"
+            log.warning(note)
+            if skipped is not None:
+                skipped.append(note)
+            continue
         out[row.key] = row
     return out
 

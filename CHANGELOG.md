@@ -5,6 +5,52 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.28.2 — 2026-11-20
+
+The corrections found while validating v0.28.1 on a tenant of 236 assets and 65 000 findings.
+
+- **The watch read its applications table again**: an application written without a publisher
+  (Cyberwatch gives none) was stored without the field and could not be read back; the whole table
+  failed, and with it every passage of the watch, three days long on the tenant. Each row keeps its
+  fields; a row that cannot be read is left out with a warning, the table and the passage go on.
+- **A batch of the shared service that fails loses only itself**: the via step stopped at the first
+  batch in error and kept the records of the batches before it (5 of 29, 1 986 records of 11 521).
+  Every batch is now asked (two failures in a row: the service is down, the rest is not asked), and
+  the CVEs of the batches lost are read from the sources directly (`intel_fallback`), said by a WARN
+  line.
+- **A finding still detected is never closed for want of a decision**: a finding without a record in
+  a run got no decision, was absent from the run, and was closed as fixed when its asset had been
+  scanned again — 58 397 findings closed. The run lists its undecided findings (`undecided`); the
+  history leaves them as they were. The triage says by a WARN line when 10 % or more of the findings
+  have no record.
+- **The deployment of the tenant that serves the shared service**: the address check refused the
+  Service of the shared service the job was about to create (`NGVM_INTEL_SERVE`); it is accepted in the
+  job's own namespace.
+- **A refused fetch says what to do**: when every address answers 403, the job says to add the project
+  (or its group) to the job token permissions of the NGVM project.
+- **The watch says when it reads no shared feed** (`NGVM_INTEL_URL` not set), instead of skipping it
+  silently.
+- **The chat knows today's date**: every answer of the tools gives `today` (a model took a CVE of 2026
+  for "a future CVE"); `get_cve` tells a CVE not published yet (`not_published`) from sources out of
+  reach (`source_unavailable`, ask again later).
+- **A burst is one alert**: from five information alerts on the same product and the same assets, only
+  possibly concerned, in one passage (the CNA of the Linux kernel: 150 mails in three hours), the watch
+  makes one alert with every CVE; the products of a sheet are listed once, twenty lines at most.
+- **The central page and the run page answer before the proxy**: their numbers are asked in parallel,
+  each waited for 8 s at most (eleven calls in a row took 84 s, the proxy gave up at 30 s); a slow
+  service shows as such on the page; a page's own reading of the decision service stops at 25 s with a
+  message. The shared service answers the new CVEs of a period from memory for ten minutes and no
+  longer waits behind a collection (the last answer, said stale, or 503 at once).
+- **Cyberwatch's libraries go through OSV**: the gems, Python, npm, Maven (with their group), NuGet,
+  Composer, Cargo and Go packages Cyberwatch lists are libraries with their purl, no longer
+  applications waiting for a CPE.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.28.2`. A tenant
+whose watch stopped on `GET /applications refused (500)` passes again with this version; the rows of
+Cyberwatch written before it are read as they are. Findings closed by a run short of records (a run of
+v0.28.1 whose via step says `batch … failed`) are reopened by the next run that decides them, counted
+as reopened.
+
 ## v0.28.1 — 2026-11-18
 
 The pages of a large tenant.

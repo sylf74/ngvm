@@ -190,7 +190,11 @@ not offered to this tenant's chat. Raising the model's context is the other way:
 and answers why: `newer_than_run` (the run could not see it: the watch's alerts say more),
 `not_detected_at_run`, `unknown_to_ngvm` or `rejected`; `concerned` is null unless the answer is
 known. Before, the chat read the decision service's 404 as « not concerned », for a CVE published
-after the run.
+after the run. Since v0.28.2 a CVE the CVE list does not hold is `not_published` (reserved or not
+published yet), and sources the shared service could not read are `source_unavailable` (ask again
+later): neither says anything about the tenant. Every answer of the tools gives `today` (UTC), and the
+description of the tools tells the model to compare dates with it: a model took a CVE of 2026 for « a
+future CVE » against its own training date.
 
 ## 9. Limits
 

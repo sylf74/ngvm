@@ -12,6 +12,9 @@
 # where <ns> is a namespace of the cluster; any other host is outside (left alone). Only variable
 # names, Services and namespaces are printed, never a value (a connection string holds a password).
 # Exit 1 when a Service is missing; a check kubectl may not make (forbidden) is a warning.
+# NGVM_DEPLOY_NAMESPACE (v0.28.2): the namespace this job deploys. With NGVM_INTEL_SERVE true, the
+# shared service's own `<release>-intel` there is created by this deployment: the first deployment of
+# the tenant that serves it was refused for the Service it was about to create.
 
 set -u
 failed=0
@@ -61,6 +64,11 @@ check() {
   case "$ns" in
     *.*|"") return 0 ;;
   esac
+  if [ "$name" = NGVM_INTEL_URL ] && [ "${NGVM_INTEL_SERVE:-}" = true ] \
+    && [ "$ns" = "${NGVM_DEPLOY_NAMESPACE:-}" ] && [ "${svc%-intel}" != "$svc" ]; then
+    echo "OK    $name: service $svc in namespace $ns, deployed by this job (NGVM_INTEL_SERVE)"
+    return 0
+  fi
   if out=$(kubectl -n "$ns" get service "$svc" -o name 2>&1); then
     echo "OK    $name: service $svc in namespace $ns"
   elif printf '%s' "$out" | grep -q 'NotFound'; then

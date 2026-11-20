@@ -32,6 +32,8 @@ from .assets.gaps import read_gaps
 from .report import write_all
 from .triage import Triage
 
+UNDECIDED_WARN = 0.10  # v0.28.2: a share of findings without a record worth a WARN line
+
 RESTITUTION = {"publish", "db", "grafana"}
 SERVICE = {"serve", "push", "sla-state", "tools", "chat-retention"}
 
@@ -166,6 +168,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"record, in {t['seconds']} s (deciding {t['decide_seconds']} s)"
                 + (f"; {t['run_seconds'] / 60:.0f} min since the start of the run" if "run_seconds" in t else "")
             )
+            if t["findings"] and t["without_record"] / t["findings"] >= UNDECIDED_WARN:
+                # v0.28.2: a run short of records says so; its undecided findings stay open
+                print(
+                    f"WARN {t['without_record']} of {t['findings']} findings without a vulnerability record "
+                    f"({100 * t['without_record'] / t['findings']:.0f} %): records missing (the via step's log "
+                    "says why); these findings get no decision and are kept open, not closed"
+                )
             phases = t.get("phases") or {}
             if phases:  # v0.28.0: where the decision time went, and the findings that cost most
                 print(

@@ -6,4 +6,4 @@ sheets. VIA depends on ngvm only: asset matching (ngvm.declared) and the remedia
 (ngvm.ssvc) are common libraries, so the watch runs in the via image alone.
 """
 
-__version__ = "0.28.1"
+__version__ = "0.28.2"
