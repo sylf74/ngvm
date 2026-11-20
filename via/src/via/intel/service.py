@@ -27,6 +27,7 @@ import logging
 import re
 import shutil
 import threading
+import time
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,9 @@ ROLES = {"read", "radar"}
 TECH_HOURS = 48  # a technology no tenant sent for this long is dropped (D17)
 FEED_DAYS = 30
 FEED_MAX = 5000
+NEW_TTL = 600  # v0.28.2: seconds an answer of new_records is kept; `since` is floored to this step
+LOCK_WAIT = 3.0  # seconds new_records waits for a collection in progress before answering without it
+
 MAX_CVES = 5000
 MAX_TECH = 5000
 TEXT = 300  # characters of a technology field or a title
@@ -139,6 +143,7 @@ class IntelService:
         self.settings = settings
         self.max_bytes = max_bytes
         self.collect_lock = threading.Lock()  # one collection at a time: one cache, one GTI quota
+        self._new_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}  # v0.28.2: new_records' answers
         self.cache: dict[str, int] = {}  # files and bytes of the cache at its last purge
         self.transport = None  # tests
         self.fixtures: str | None = None  # tests: the sources read from files
@@ -258,32 +263,64 @@ class IntelService:
         change = query.get("change", "")
         if change and change not in ("new", "updated"):
             raise Problem(HTTPStatus.BAD_REQUEST, "change: new or updated")
-        with self.collect_lock:
-            sources = self._sources()
+        # v0.28.2: the same question within NEW_TTL is answered from memory, and a question that comes
+        # while the records are being collected does not wait behind them (84 s on 2026-11-20, a page
+        # gave up): the last answer, said stale, or 503 at once.
+        if since:
+            since = _iso(_floor(dt.datetime.fromisoformat(since), NEW_TTL))
+        key = (since, until, change, query.get("kev", ""), min_cvss, limit, offset)
+        cached = self._new_cache.get(key)
+        if cached is not None and time.monotonic() - cached[0] < NEW_TTL:
+            return cached[1]
+        if not self.collect_lock.acquire(timeout=LOCK_WAIT):
+            if cached is not None:
+                return {**cached[1], "stale_seconds": round(time.monotonic() - cached[0])}
+            raise Problem(HTTPStatus.SERVICE_UNAVAILABLE, "the service is collecting records: ask again in a minute")
+        try:
+            out = self._new_records(since, until, change, query, min_cvss, limit, offset)
+        finally:
+            self.collect_lock.release()
+        if len(self._new_cache) > 64:
+            self._new_cache.clear()
+        self._new_cache[key] = (time.monotonic(), out)
+        return out
+
+    def _new_records(  # noqa: PLR0913 - the parsed query of new_records
+        self,
+        since: str,
+        until: str,
+        change: str,
+        query: dict[str, str],
+        min_cvss: float | None,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        """new_records' answer; the collection lock is held by the caller."""
+        sources = self._sources()
+        try:
             try:
-                try:
-                    entries = sources.delta_entries()
-                except SourceError as exc:
-                    raise Problem(HTTPStatus.BAD_GATEWAY, f"cvelistV5 not read: {exc}") from exc
-                seen: dict[str, tuple[str, str]] = {}
-                for cve, kind, at in entries:  # newest first: the latest change of each CVE
-                    if (since and at < since) or (until and at > until) or (change and kind != change):
-                        continue
-                    seen.setdefault(cve, (kind, at))
-                filtered = query.get("kev") == "true" or min_cvss is not None
-                ids = list(seen)
-                records: dict[str, Any] = {}
-                if filtered:  # every record of the period is needed to filter on it
-                    for start in range(0, len(ids), MAX_CVES):
-                        part = collect_direct(sources, ids[start : start + MAX_CVES])
-                        records.update({r.cve_id: r for r in part.records})
-                    ids = [c for c in ids if c in records and _keep(records[c], query.get("kev") == "true", min_cvss)]
-                page_ids = ids[offset : offset + limit]
-                missing = [c for c in page_ids if c not in records]
-                if missing:
-                    records.update({r.cve_id: r for r in collect_direct(sources, missing).records})
-            finally:
-                sources.close()
+                entries = sources.delta_entries()
+            except SourceError as exc:
+                raise Problem(HTTPStatus.BAD_GATEWAY, f"cvelistV5 not read: {exc}") from exc
+            seen: dict[str, tuple[str, str]] = {}
+            for cve, kind, at in entries:  # newest first: the latest change of each CVE
+                if (since and at < since) or (until and at > until) or (change and kind != change):
+                    continue
+                seen.setdefault(cve, (kind, at))
+            filtered = query.get("kev") == "true" or min_cvss is not None
+            ids = list(seen)
+            records: dict[str, Any] = {}
+            if filtered:  # every record of the period is needed to filter on it
+                for start in range(0, len(ids), MAX_CVES):
+                    part = collect_direct(sources, ids[start : start + MAX_CVES])
+                    records.update({r.cve_id: r for r in part.records})
+                ids = [c for c in ids if c in records and _keep(records[c], query.get("kev") == "true", min_cvss)]
+            page_ids = ids[offset : offset + limit]
+            missing = [c for c in page_ids if c not in records]
+            if missing:
+                records.update({r.cve_id: r for r in collect_direct(sources, missing).records})
+        finally:
+            sources.close()
         counts = {
             "new": sum(1 for c in ids if seen[c][0] == "new"),
             "updated": sum(1 for c in ids if seen[c][0] == "updated"),
@@ -508,3 +545,9 @@ def make_handler(service: IntelService) -> type[JsonHandler]:
 
 def serve(service: IntelService, host: str = "0.0.0.0", port: int = 8080):  # noqa: S104, ANN201 - in a pod
     return _serve(make_handler(service), host, port)
+
+
+def _floor(moment_: dt.datetime, seconds: int) -> dt.datetime:
+    """`moment_` down to a multiple of `seconds` (UTC)."""
+    stamp = int(moment_.timestamp()) // seconds * seconds
+    return dt.datetime.fromtimestamp(stamp, dt.UTC)

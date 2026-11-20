@@ -21,6 +21,7 @@ import re
 import secrets
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
@@ -46,8 +47,15 @@ TEXT_MAX = 600
 LIST_MAX = 10
 EXPORT_MAX = 500
 EXPLAIN_MAX = 30
+# v0.28.2: why the shared service has no record of a CVE, as the chat must say it
+NOT_PUBLISHED = "CVE record not found"
+SOURCE_DOWN = re.compile(r"timed? ?out|unreachable|not read|refused|relay|HTTP 5\d\d|answered 5\d\d|connect", re.I)
 EXPORT_TTL = 3600  # seconds a download link stays valid
 PROGRESS_CACHE = 20.0  # seconds the chain and the pillars' numbers are kept (v0.26.2)
+# v0.28.2: a page answers before the proxy in front of it gives up (30 s): each number of a pillar is
+# asked in parallel and waited for this long at most; a slow service shows as such on the page.
+PAGE_CALL_TIMEOUT = 8.0
+PAGE_READ_TIMEOUT = 25.0  # a page's own reading of the decision service (the run, the graph)
 EXPORT_KEEP = 50  # documents kept at most
 EXPORT_PATH = re.compile(r"^/ngvm/exports/(?P<token>[A-Za-z0-9_-]{32,64})/(?P<name>[A-Za-z0-9._-]{1,120})$")
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -161,7 +169,9 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
         "inputs, fixes, dates: published, last updated, added to KEV, KEV due date, EPSS day), the assets it "
         "concerns (paged) and the assets that have the product in a version outside the vulnerable range "
         "(not_affected). A CVE in no decision of the run comes with `state`: newer_than_run (the run could not "
-        "see it: check list_alerts), not_detected_at_run, unknown_to_ngvm or rejected, and `why`. Only "
+        "see it: check list_alerts), not_detected_at_run, not_published (no record in the CVE list yet), "
+        "source_unavailable (the sources could not be read: ask again later), unknown_to_ngvm or rejected, "
+        "and `why`. Only "
         "`concerned: false` means not concerned; `concerned: null` means no conclusion — say so.",
         [_p("cve", "CVE id, e.g. CVE-2024-3094"), *_PAGE, _RUN],
         "cves/{cve}",
@@ -642,7 +652,8 @@ def openapi(tenant: str, only: frozenset[str] | None = None) -> dict[str, Any]:
                 "question, say so; never answer that nothing exists without a tool's answer saying it, and "
                 "never take an empty answer of one tool for the answer of another. The tools only read, except "
                 "request_connector_run, which prepares a request a person must confirm: never say an action "
-                "ran before list_actions says it is done."
+                "ran before list_actions says it is done. Every answer gives `today` (UTC): compare dates "
+                "and CVE years with it, never with what you believe the date is."
             ),
         },
         "paths": paths,
@@ -843,6 +854,9 @@ class Tools:
             self.audit.write(self.tenant, who, kind, f"chat:{tool}", path, dict(query), str(int(p.status)), p.detail)
             raise
         self.audit.write(self.tenant, who, kind, f"chat:{tool}", path, dict(query))
+        if isinstance(answer, dict) and "today" not in answer:
+            # v0.28.2: the model judged a CVE of 2026 "in the future" against its training date
+            answer = {"today": dt.datetime.now(dt.UTC).date().isoformat(), **answer}
         return answer
 
     @staticmethod
@@ -936,6 +950,21 @@ class Tools:
             answer["why"] = (
                 "no decision of this run carries this CVE, and the shared intelligence service could not be "
                 "asked whether it is newer than the run: no conclusion on whether the tenant is concerned"
+            )
+        elif record is None and unknown == NOT_PUBLISHED:
+            # v0.28.2: the CVE list has no such record: reserved or not published yet
+            answer["state"] = "not_published"
+            answer["why"] = (
+                "the CVE list (cvelistV5) has no record of this id: reserved, or not published yet. Nothing "
+                "says what it concerns before it is published; no conclusion on whether the tenant is concerned"
+            )
+        elif record is None and SOURCE_DOWN.search(unknown or ""):
+            # v0.28.2: the service could not read its sources (relay closed, timeout): ask again later
+            answer["state"] = "source_unavailable"
+            answer["why"] = (
+                f"the shared intelligence service could not read its sources for this CVE ({unknown}): ask "
+                "again later; this says nothing about the CVE itself, no conclusion on whether the tenant is "
+                "concerned"
             )
         elif record is None:
             answer["state"] = "unknown_to_ngvm"
@@ -1146,12 +1175,20 @@ class Tools:
 
     # -- the platform (v0.23.9) -----------------------------------------------------------------
     @staticmethod
-    def _json(client: httpx.Client | None, path: str, what: str, params: dict[str, str] | None = None) -> Any:
+    def _json(
+        client: httpx.Client | None,
+        path: str,
+        what: str,
+        params: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
         """A service's answer, or a short reason why there is none (the platform's answer goes on)."""
         if client is None:
             return {"state": f"the {what} does not run for this tenant"}
         try:
-            r = client.get(path, params=params)
+            r = client.get(path, params=params, **({"timeout": timeout} if timeout else {}))
+        except httpx.TimeoutException:
+            return {"state": f"the {what} did not answer within {timeout or 30:g} s"}
         except httpx.HTTPError:
             return {"state": f"the {what} cannot be reached"}
         if r.status_code != 200:
@@ -1309,7 +1346,9 @@ class Tools:
     # -- where the run is, pillar by pillar (v0.26.2) -------------------------------------------
     def _alert_counts(self) -> dict[str, int]:
         """The alerts of the watch by status, counted here: the watch service pages them."""
-        answer = self._json(self._via, f"/v1/tenants/{self.tenant}/alerts", "watch service", {"limit": "200"})
+        answer = self._json(
+            self._via, f"/v1/tenants/{self.tenant}/alerts", "watch service", {"limit": "200"}, PAGE_CALL_TIMEOUT
+        )
         counts: dict[str, int] = {}
         for alert in answer.get("items") or []:
             status = str(alert.get("status", ""))
@@ -1329,7 +1368,9 @@ class Tools:
             ("new_cves_kev", {"since": since, "limit": "1", "kev": "true"}),
             ("new_cves_critical", {"since": since, "limit": "1", "min_cvss": "9"}),
         ):
-            answer = self._json(self._intel, "/v1/records/new", "shared intelligence service", params)
+            answer = self._json(
+                self._intel, "/v1/records/new", "shared intelligence service", params, PAGE_CALL_TIMEOUT
+            )
             if isinstance(answer.get("total"), int):
                 out[name] = answer["total"]
         return out
@@ -1344,7 +1385,38 @@ class Tools:
             cached = self._progress_cached
         if cached is not None and time.monotonic() - cached[0] < max_age:
             return cached[1]
-        chains = self._json(self._http, f"/v1/tenants/{self.tenant}/progress", "decision service", {"limit": "2"})
+        t = PAGE_CALL_TIMEOUT
+        calls = {
+            "chains": lambda: self._json(
+                self._http, f"/v1/tenants/{self.tenant}/progress", "decision service", {"limit": "2"}, t
+            ),
+            "summary": lambda: self._json(
+                self._http, f"/v1/tenants/{self.tenant}/summary", "decision service", None, t
+            ),
+            "decision": lambda: self._json(
+                self._http, f"/v1/tenants/{self.tenant}/status", "decision service", None, t
+            ),
+            "via": lambda: self._json(self._via, f"/v1/tenants/{self.tenant}/status", "watch service", None, t),
+            "detect": lambda: self._json(
+                self._detect, f"/v1/tenants/{self.tenant}/status", "detection service", None, t
+            ),
+            "intel": lambda: (
+                self._json(self._intel, "/v1/status", "shared intelligence service", None, t) if self._intel else {}
+            ),
+            "tickets": lambda: self._json(
+                self._dispatch, f"/v1/tenants/{self.tenant}/tickets", "dispatch service", {"limit": "1"}, t
+            ),
+            "new": self._new_counts,
+            "alerts": lambda: self._alert_counts() if self._via is not None else {},
+            "requests": self._open_requests,
+            "next": self._daily_next,
+        }
+        # v0.28.2: in parallel, each bounded: the page took the sum of eleven calls, 84 s on 2026-11-20
+        # when the shared service waited behind a collection, and the proxy gave up at 30 s.
+        with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+            futures = {name: pool.submit(fn) for name, fn in calls.items()}
+            got = {name: f.result() for name, f in futures.items()}
+        chains = got["chains"]
         runs = chains.get("runs") or []
         run = dict(runs[0]) if runs else {}
         previous = runs[1] if len(runs) > 1 else {}
@@ -1355,12 +1427,8 @@ class Tools:
         previous = (
             {"run": previous.get("run", ""), "state": _chain_state(previous.get("steps") or [])} if previous else {}
         )
-        summary = self._json(self._http, f"/v1/tenants/{self.tenant}/summary", "decision service")
-        decision = self._json(self._http, f"/v1/tenants/{self.tenant}/status", "decision service")
-        via = self._json(self._via, f"/v1/tenants/{self.tenant}/status", "watch service")
-        detect = self._detect_status()
-        intel = self._json(self._intel, "/v1/status", "shared intelligence service") if self._intel else {}
-        tickets = self._json(self._dispatch, f"/v1/tenants/{self.tenant}/tickets", "dispatch service", {"limit": "1"})
+        summary, decision, via = got["summary"], got["decision"], got["via"]
+        detect, intel, tickets = got["detect"], got["intel"], got["tickets"]
         collectors = [  # the field of the detection contract (CollectorStatus): last_received_at (v0.27.3)
             {"collector": c.get("id"), "source": x.get("source"), "last_push": x.get("last_received_at", ""),
              "age_hours": x.get("age_hours"), "stale": bool(x.get("stale")), "last_error": x.get("last_error", "")}
@@ -1374,10 +1442,10 @@ class Tools:
             "previous_run": previous,
             "pillars": {
                 "watch": {
-                    **self._new_counts(),
+                    **got["new"],
                     "last_passage": via.get("last_passage", ""),
                     "alerts_last_24h": via.get("alerts_last_24h"),
-                    "alerts_by_status": self._alert_counts() if self._via is not None else {},
+                    "alerts_by_status": got["alerts"],
                     "failing_sources": via.get("failing_sources") or [],
                     "state": via.get("state", ""),
                 },
@@ -1404,7 +1472,7 @@ class Tools:
                     "by_state": counts.get("by_state") or {},
                     "by_level": counts.get("by_level") or {},
                     "with_itsm_ref": counts.get("with_itsm_ref"),
-                    "pending_requests": self._open_requests(),
+                    "pending_requests": got["requests"],
                     "state": tickets.get("state", ""),
                 },
             },
@@ -1422,7 +1490,7 @@ class Tools:
                 }
                 if isinstance(volume, dict) and "used_percent" in volume
                 else {},
-                "next_daily_run": self._daily_next(),
+                "next_daily_run": got["next"],
                 "collectors": collectors,
             },
             "note": "a step is done, partial (exit 3: a warning, the run goes on), failed or running; the "
@@ -1581,7 +1649,12 @@ class Tools:
     # -- documents ------------------------------------------------------------------------------
     def _raw(self, target: str, query: dict[str, str]) -> dict[str, Any]:
         try:
-            r = self._http.get(f"/v1/tenants/{self.tenant}/{target}", params=query)
+            r = self._http.get(f"/v1/tenants/{self.tenant}/{target}", params=query, timeout=PAGE_READ_TIMEOUT)
+        except httpx.TimeoutException as exc:  # v0.28.2: the page says it, before the proxy's 502
+            raise Problem(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                f"the decision service did not answer within {PAGE_READ_TIMEOUT:g} s ({target}): try again",
+            ) from exc
         except httpx.HTTPError as exc:
             raise Problem(HTTPStatus.BAD_GATEWAY, "the decision service cannot be reached") from exc
         if r.status_code != 200:

@@ -514,3 +514,5 @@ class TriageRun:
     # How long the triage took and on what (v0.23.18): started_at, ended_at, seconds; the run's start
     # and its seconds up to the decisions when known; findings read, decided, without a record.
     timing: dict[str, Any] = field(default_factory=dict)
+    # v0.28.2: the ids of the findings read but not decided (no record): still detected, never closed.
+    undecided: list[str] = field(default_factory=list)

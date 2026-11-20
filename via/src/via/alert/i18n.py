@@ -53,6 +53,8 @@ LABELS: dict[str, dict[str, str]] = {
         "reason.source": "publication {source}",
         "reason.cisa_poc": "exploitation or proof of concept reported by CISA",
         "reason.exposed_critical": "critical vulnerability on an internet-facing asset",
+        "reason.burst": "{n} publications about the same product in this passage, the asset only possibly "
+        "concerned: gathered in one alert",
         "cve.none": "No CVE assigned yet.",
         "unspecified": "Not specified by the sources.",
         "cvss.none": "No CVSS score published yet.",
@@ -190,6 +192,8 @@ LABELS: dict[str, dict[str, str]] = {
         "reason.source": "publication {source}",
         "reason.cisa_poc": "exploitation ou preuve de concept signalée par la CISA",
         "reason.exposed_critical": "vulnérabilité critique sur un actif exposé à Internet",
+        "reason.burst": "{n} publications sur le même produit dans ce passage, l'actif seulement peut-être "
+        "concerné : regroupées en une alerte",
         "cve.none": "Aucune CVE attribuée à ce stade.",
         "unspecified": "Non précisé par les sources.",
         "cvss.none": "Pas encore de score CVSS publié.",
@@ -325,6 +329,8 @@ def table_header(lang: str) -> list[str]:
 def reason(lang: str, code: str) -> str:
     """A reason of the watch (`kev`, `source:<name>`...) as a sentence of `lang`."""
     kind, _, arg = code.partition(":")
+    if kind == "burst":  # v0.28.2: a burst of publications gathered in one alert
+        return t(lang, "reason.burst", n=arg)
     return t(lang, f"reason.{kind}", source=arg) if kind == "source" else t(lang, f"reason.{kind}")
 
 

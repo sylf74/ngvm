@@ -228,8 +228,12 @@ class PgRunStore:
     def _findings(self, conn, tenant: str, rid: str, at: dt.datetime, document: dict[str, Any]) -> None:
         """Open, keep or close each finding from the newest run. A finding absent from it is closed
         (fixed) only when its asset was scanned again, after the finding's last observation, by a
-        source that had seen it (v0.18.1); otherwise it is unverified: absent, not checked."""
+        source that had seen it (v0.18.1); otherwise it is unverified: absent, not checked. A finding
+        the run read but could not decide (`undecided`, v0.28.2) is left as it was."""
         current: dict[str, dict[str, Any]] = {row_id(r): r for r in document["rows"]}
+        # v0.28.2: a finding read but not decided (no record this run) is still detected: neither
+        # closed nor unverified. On 2026-11-20 a run short of records closed 58 397 of them.
+        undecided = set(document.get("undecided") or [])
         scans = {a["id"]: a.get("scans") or {} for a in document.get("assets") or []}
         known = {
             f: (level, closed, unverified, levels, seen_by, asset, sla, priorities)
@@ -280,7 +284,7 @@ class PgRunStore:
                      json.dumps(stored) if stored else None, json.dumps(priorities), tenant, fid),
                 )  # fmt: skip
             for fid, (_, closed, unverified, _, seen_by, asset, _, _) in known.items():
-                if closed is not None or fid in current:
+                if closed is not None or fid in current or fid in undecided:
                     continue
                 if rescanned(seen_by or {}, scans.get(asset) or {}):
                     cur.execute(

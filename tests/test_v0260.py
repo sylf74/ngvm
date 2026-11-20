@@ -139,7 +139,10 @@ def test_the_records_are_asked_in_batches_that_answer(tmp_path) -> None:
 
     assert remote.BATCH <= 500 and remote.TIMEOUT >= 180
     source = (ROOT / "via/src/via/intel/remote.py").read_text()
-    assert "the batches that answered are kept" in source and "if n == 1:\n                    raise" in source
+    # v0.28.2: a failed batch no longer ends the request (the batch is lost alone, the next ones asked)
+    assert ("the batches that answered are kept" in source and "if n == 1:\n                    raise" in source) or (
+        "the batch is lost alone, the next ones are asked" in source
+    )
 
 
 def test_the_volumes_and_the_memory_are_set_by_the_pipeline() -> None:

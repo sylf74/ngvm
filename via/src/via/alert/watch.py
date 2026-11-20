@@ -291,9 +291,12 @@ def discover(
 
 
 def _read_intel(sources: Sources, src: Source, state: State) -> list[Item]:
-    """The feed of the shared intelligence service since the last mark; nothing without one configured."""
+    """The feed of the shared intelligence service since the last mark; nothing without one configured,
+    said in the passage's log (v0.28.2: the feed was skipped silently, and a tenant without the
+    variable looked like a tenant with nothing in the feed)."""
     client = IntelClient.from_settings(sources.settings)
     if client is None:
+        print(f"{src.name}: no shared service (NGVM_INTEL_URL not set): its feed is not read", flush=True)
         return []
     try:
         mark = state.marks.get(src.id)
@@ -562,9 +565,74 @@ def relevant(
                 possible=possible,
             )
         )
+    alerts = gather_bursts(alerts, profile.id)
     if state:
         today = dt.date.today().isoformat()
         for a in alerts:
             for c in a.item.cves:
                 state.alerted[c] = today
     return alerts
+
+
+BURST_MIN = 5  # v0.28.2: weak alerts on one product and the same assets, gathered from this many
+
+
+def _weak(a: Alert) -> bool:
+    """An information alert whose assets are only possibly concerned: no scan, no listed version and
+    no declared version says the product is affected."""
+    return a.level == "info" and not a.findings and not a.detected and not a.exposed and not a.radar
+
+
+def _main_product(a: Alert) -> str:
+    named = [f"{e.vendor} {e.product}".strip() for r in a.records for e in r.affected if e.product]
+    return max(set(named), key=named.count) if named else (a.product_matches[0] if a.product_matches else "")
+
+
+def gather_bursts(alerts: list[Alert], client_id: str) -> list[Alert]:
+    """One alert for a burst of weak alerts on the same product and the same assets (v0.28.2).
+
+    The CNA of the Linux kernel publishes its CVEs by the dozen: on 2026-11-19 each one named a host
+    whose packages are named like the product (`linux-*`), its version not comparable to the record
+    (possible), and the analysts received 150 mails in three hours. Such alerts are now one, with every
+    CVE and the reason; an alert with a stronger proof, or urgent, stays alone."""
+    groups: dict[tuple[str, tuple[str, ...]], list[Alert]] = {}
+    for a in alerts:
+        if _weak(a):
+            assets = tuple(sorted({asset.id for asset, _ in a.possible} | set(a.product_matches)))
+            groups.setdefault((_main_product(a).lower(), assets), []).append(a)
+    gathered = {id(a) for g in groups.values() if len(g) >= BURST_MIN for a in g}
+    if not gathered:
+        return alerts
+    out = [a for a in alerts if id(a) not in gathered]
+    for (_, _), group in groups.items():
+        if len(group) < BURST_MIN:
+            continue
+        first = group[0]
+        product = _main_product(first) or first.item.title
+        cves = sorted({c for a in group for c in a.item.cves})
+        records = {r.cve_id: r for a in group for r in a.records}
+        possible: dict[str, tuple[Asset, str]] = {}
+        for a in group:
+            for asset, detail in a.possible:
+                possible.setdefault(asset.id, (asset, detail))
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "-", product.lower()).strip("-")[:60] or "product"
+        item = dataclasses.replace(
+            first.item,
+            key=f"burst:{slug}:{cves[0]}",
+            title=f"{len(cves)} CVEs about {product}",
+            cves=cves,
+            published=max(a.item.published or "" for a in group),
+            publication=None,
+        )
+        out.append(
+            dataclasses.replace(
+                first,
+                id=f"{client_id}-burst-{slug}-{cves[0]}"[:160],
+                item=item,
+                records=[records[c] for c in cves if c in records],
+                product_matches=sorted({m for a in group for m in a.product_matches}),
+                reasons=[f"burst:{len(cves)}"],
+                possible=list(possible.values()),
+            )
+        )
+    return out

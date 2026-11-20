@@ -82,7 +82,7 @@ def test_one_dashboard_address() -> None:
 
 def test_documented() -> None:
     hld = (ROOT / "docs/hld/00-product-strategy.md").read_text(encoding="utf-8")
-    assert "| v0.28.1 (current) |" in hld
+    assert "| v0.28.1 (current) |" in hld or "| v0.28.1 |" in hld  # the next release takes "(current)"
 
 
 def test_release_recorded() -> None:

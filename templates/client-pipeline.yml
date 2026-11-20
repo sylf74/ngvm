@@ -13,7 +13,7 @@
 #
 #     include:
 #       - project: vulnops/ngvm
-#         ref: v0.28.1
+#         ref: v0.28.2
 #         file: templates/client-pipeline.yml
 #     variables:
 #       NGVM_REF: v0.19.0        # same version as the include
@@ -137,9 +137,16 @@ stages: [validate, deploy, collect, via, detect, assets, triage, publish, watch,
           NGVM_FROM="${BASE#*://}"; break
         fi
         echo "WARN  NGVM not fetched from ${BASE#*://}: $(tail -n 1 .ngvm-clone.err | sed 's/gitlab-ci-token:[^@]*@//')"
+        if grep -q 'error: 403' .ngvm-clone.err; then DENIED=yes; fi
       done
       rm -f .ngvm-clone.err
-      if [ -z "$NGVM_FROM" ]; then echo "ERROR NGVM $NGVM_REF could not be fetched from $NGVM_PROJECT by any address (see the WARN lines)"; exit 1; fi
+      if [ -z "$NGVM_FROM" ]; then
+        echo "ERROR NGVM $NGVM_REF could not be fetched from $NGVM_PROJECT by any address (see the WARN lines)"
+        if [ "${DENIED:-}" = yes ]; then
+          echo "      refused (403) to the job token of ${CI_PROJECT_PATH:-this project}: in $NGVM_PROJECT, Settings > CI/CD > Job token permissions, add this project or its group"
+        fi
+        exit 1
+      fi
       echo "NGVM $NGVM_REF fetched from $NGVM_FROM"
     - pip install --quiet .ngvm/ngvm .ngvm/via ".ngvm/detect[openvas,snmp]" .ngvm/verdict
     - if [ -f settings.yaml ]; then export SETTINGS=settings.yaml; else export SETTINGS=.ngvm/config/settings.yaml; fi
@@ -205,8 +212,9 @@ deploy-k8s:
     # Every address given to the pods that names a Service of this cluster must name one that exists
     # (v0.27.3): an intel URL to a missing Service deployed fine and failed in every passage. Checked
     # before anything changes; only names are printed, never a value (docs/kubernetes.md §2).
-    - sh .ngvm/deploy/k8s/check-addresses.sh
     - NS="${NGVM_K8S_NAMESPACE:-ngvm-$(echo "$CI_PROJECT_NAME" | tr 'A-Z_' 'a-z-')}"
+    # v0.28.2: the job's namespace, for the Service it deploys itself (the shared service of `via`).
+    - NGVM_DEPLOY_NAMESPACE="$NS" sh .ngvm/deploy/k8s/check-addresses.sh
     # No `kubectl apply` through the GitLab agent (v0.25.8): a client-side apply reads the cluster's
     # OpenAPI schema, which the agent server refuses to serve (it accepts JSON, YAML and the
     # Kubernetes protobuf only), so the job stopped on the namespace. `get` and `create` need none.

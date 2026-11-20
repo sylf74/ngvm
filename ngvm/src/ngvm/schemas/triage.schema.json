@@ -565,6 +565,13 @@
           "type": "boolean"
         }
       }
+    },
+    "undecided": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "v0.28.2: the findings of the run that got no decision (no vulnerability record): still detected, they are neither closed nor unverified by the history"
     }
   }
 }

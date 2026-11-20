@@ -30,6 +30,8 @@ from .i18n import reason as reason_text
 from .i18n import t, table_header
 from .watch import Alert, exposure
 
+MAX_PRODUCT_LINES = 20  # v0.28.2: a burst of 35 CVEs listed 140 product lines
+
 QUALIFIER = ((9.0, "q.critical"), (7.0, "q.high"), (4.0, "q.medium"), (0.1, "q.low"))
 
 PROSE_SCHEMA = {
@@ -242,7 +244,11 @@ def build(
         for r in recs:
             for e in r.affected[:4]:
                 v = _versions(e, lang)
-                products.append(f"- {e.vendor} {e.product}" + (f": {v}" if v else ""))
+                line = f"- {e.vendor} {e.product}" + (f": {v}" if v else "")
+                if line not in products:  # v0.28.2: a burst repeats the same product for each CVE
+                    products.append(line)
+        if len(products) > MAX_PRODUCT_LINES:
+            products = [*products[:MAX_PRODUCT_LINES], f"- … (+{len(products) - MAX_PRODUCT_LINES})"]
     fiche.sections.append((t(lang, "h.product"), products or [t(lang, "unspecified")]))
     types = sorted({c for r in recs for c in r.cwes})
     type_lines = []
