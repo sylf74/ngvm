@@ -34,10 +34,10 @@ from ngvm.profile import ProfileError, load_profile
 from ngvm.run import Phases
 from via.intel.sources import Sources
 
-from . import journal, radar, teams, word
+from . import journal, kinds, mailhtml, radar, teams, word
 from .contacts import ContactsError, load_contacts, recipients
 from .feeds import load_catalogue
-from .fiche import build, markdown_html
+from .fiche import build, kind_of
 from .inventory import Inventory, describe, fetch, load
 from .mail import MailError, message, send
 from .watch import State, discover, relevant
@@ -90,6 +90,17 @@ def _edit_help(a: dict) -> str:
             f"<code>edits/{a['docx']}</code> of the project."
         )
     return out
+
+
+def _issued(timezone: str) -> str:
+    """Now, in the client's time zone, as the mail's header and footer show it (v0.29.0)."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        now = dt.datetime.now(ZoneInfo(timezone))
+    except (ZoneInfoNotFoundError, ValueError):
+        now = dt.datetime.now(dt.UTC)
+    return now.strftime("%Y-%m-%d %H:%M") + ("" if now.utcoffset() else " UTC")
 
 
 def _today() -> str:
@@ -212,6 +223,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
             state.save()
             (out / "index.json").write_text("[]", encoding="utf-8")
             return 0
+        inventory = None
         if radar.is_radar(profile):  # the watch team's radar (v0.22.0): events, whoever they concern
             with phases("match"):
                 alerts = radar.alerts(items, profile, sources, state, llm=llm)
@@ -230,6 +242,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 note = push_technologies(settings, profile, state)
                 if note:
                     print(note)
+        # v0.29.0: the kind of each mail (Alerte, Hot Topic, Information), by the rules of the profile on
+        # the last run's decisions.
+        kinds.apply(alerts, profile, inventory.decisions if inventory is not None else None)
         index = []
         phases.start("sheets")
         template = _word_template(profile, args.profile)
@@ -241,13 +256,16 @@ def cmd_watch(args: argparse.Namespace) -> int:
         for alert in alerts:
             fiche = build(alert, settings, llm)
             (out / f"{alert.id}.md").write_text(fiche.markdown(), encoding="utf-8")
-            (out / f"{alert.id}.html").write_text(fiche.html(), encoding="utf-8")
             entry = {
                 "id": alert.id,
                 "level": alert.level,
                 "title": fiche.title,
                 "prose": fiche.prose_source,
                 "cves": list(alert.item.cves),
+                # v0.29.0: what the mail is laid out with (mailhtml), in every language
+                "kind": alert.kind.to_dict() if alert.kind is not None else {"kind": kind_of(alert)},
+                "client_name": alert.client_name or profile.name,
+                "issued_local": _issued(alert.timezone),
             }
             if alert.radar:  # published to the shared service once validated
                 event = state.radar["events"][alert.radar["id"]]
@@ -267,6 +285,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                         entry["ctx"][lang] = name
                 except Exception as exc:  # a broken template must not stop the watch: mail without the file
                     sheet_errors.append(f"Word sheet of {alert.id} ({template}): {exc}")
+            (out / f"{alert.id}.html").write_text(mailhtml.render(fiche.markdown(), entry), encoding="utf-8")
             index.append(entry)
         (out / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
         phases.stop("sheets")
@@ -317,7 +336,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         if a["id"] in mailed:
             print(f"  analysts: {a['id']} already mailed by an earlier passage, not mailed again")
             continue
-        fiche_html = (out / f"{a['id']}.html").read_text(encoding="utf-8")
+        sheet_md = (out / f"{a['id']}.md").read_text(encoding="utf-8")
         to = (
             ", ".join(f"{c.label()} [{c.language}]" for c in recipients(a["level"], contacts, profile))
             or "no recipient configured"
@@ -330,15 +349,16 @@ def cmd_watch(args: argparse.Namespace) -> int:
             else _send_link(a["id"])
         )
         note = (
-            f'<p style="background:#fff4d6;padding:8px"><b>To validate before sending to {profile.name}</b> '
+            '<div style="background:#fdf6e3;border:1px solid #ecd9a3;border-radius:10px;padding:14px 18px;'
+            f'font-size:14px;line-height:1.5;color:#5c4813"><b>To validate before sending to {profile.name}</b> '
             f"(recipients: {to}).<br>Alert {number} of {len(index)} of this run, "
-            f"id <code>{a['id']}</code>.<br>{how}{_edit_help(a)}</p>"
+            f"id <code>{a['id']}</code>.<br>{how}{_edit_help(a)}<br>This note is not in the mail sent.</div>"
         )
         attachments = [out / a["docx"]] if a.get("docx") else []
         msg = message(
-            f"[CERT Alert][{profile.id}] To validate — {a['title']}",
-            note + fiche_html,
-            (out / f"{a['id']}.md").read_text(encoding="utf-8"),
+            f"[To validate][{profile.id}] {mailhtml.subject(sheet_md, a, fallback=a['title'])}",
+            mailhtml.render(sheet_md, a, note=note),
+            sheet_md,
             analysts,
             attachments=attachments,
         )
@@ -466,7 +486,8 @@ def cmd_send(args: argparse.Namespace) -> int:
             continue
         if edited:
             print(f"{a['id']}: edited by the analyst ({', '.join(edited)})")
-        msg = message(f"[CERT Alert] {a['title']}", html_body, text_body, [c.email for c in to], attachments=files)
+        subject = mailhtml.subject(text_body, a, fallback=a["title"])
+        msg = message(subject, html_body, text_body, [c.email for c in to], attachments=files)
         emails = [c.email for c in to]
         try:
             result = send(msg, out / "outbox")
@@ -508,7 +529,7 @@ def _final_content(
             raise ValueError(f"edits/{a['id']}.md cites {', '.join(foreign)}, which this alert does not: not sent")
         if not new.strip():
             raise ValueError(f"edits/{a['id']}.md is empty: not sent")
-        text, html_body = new, markdown_html(new)
+        text, html_body = new, mailhtml.render(new, a)
         edited.append("text")
     if edits and sheet and (edits / sheet.name).exists():
         sheet = edits / sheet.name

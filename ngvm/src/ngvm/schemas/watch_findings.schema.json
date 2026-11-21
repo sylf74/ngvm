@@ -9,6 +9,11 @@
     "schema": {"const": "ngvm.watch_findings/1"},
     "generated_at": {"type": "string"},
     "client_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "decisions": {
+      "type": "object",
+      "description": "Since v0.29.0: asset id -> CVE -> the run's decision (ACT, ATTEND, TRACK), for the kind of the alert mails",
+      "additionalProperties": {"type": "object", "additionalProperties": {"enum": ["ACT", "ATTEND", "TRACK"]}}
+    },
     "assets": {
       "type": "object",
       "description": "Asset id -> its findings: [cve, status, affected versions, [[source, package, installed version, fixed version], ...]]",

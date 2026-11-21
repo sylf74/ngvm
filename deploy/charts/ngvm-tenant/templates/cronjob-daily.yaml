@@ -165,8 +165,10 @@ rc=0
 dispatch run --url {{ include "ngvm-tenant.dispatchUrl" . | quote }} --tenant {{ .Values.tenant | quote }} \
   --token-file /secrets/dispatch-run-token || rc=$?
 if [ "$rc" -ne 0 ]; then echo "WARN dispatch incomplete (exit $rc): the next run dispatches again"; fi
+# v0.29.0: the failure of the job is the publish step's, said as such: the dispatch's own errors above
+# (exit 3) were read as its cause.
 if [ "$(cat /data/.publish-failures 2>/dev/null || echo 0)" -ge {{ .Values.daily.publishFailures }} ]; then
-  echo "ERROR a reporting database refused the last runs (see the step publish): the daily job ends failed"; exit 1
+  echo "ERROR the daily job ends failed because of the step publish, not of the dispatch: a reporting database refused the last $(cat /data/.publish-failures) runs (its ERROR lines are in the log of the step publish)"; exit 1
 fi
 {{- end -}}
 
@@ -174,8 +176,11 @@ fi
 # The watch on Kubernetes names the machines of this run: its assets and findings to the watch service.
 if [ ! -s /secrets/via-run-token ]; then echo "WARN no via-run-token: the watch keeps the previous inventory"; exit 0; fi
 rc=0
+# v0.29.0: the run's decisions go with it, for the kind of the alert mails (Alerte, Hot Topic).
+TRIAGE_DOC=$(ls /data/output/*/*/triage.json 2>/dev/null | sort | tail -1)
 via service push-inventory --url {{ include "ngvm-tenant.viaUrl" . | quote }} --tenant {{ .Values.tenant | quote }} \
-  --token-file /secrets/via-run-token --assets-dir /data/work/assets/{{ .Values.tenant }} || rc=$?
+  --token-file /secrets/via-run-token --assets-dir /data/work/assets/{{ .Values.tenant }} \
+  ${TRIAGE_DOC:+--triage "$TRIAGE_DOC"} || rc=$?
 if [ "$rc" -ne 0 ]; then echo "WARN watch service not updated (exit $rc): see above what the watch keeps"; fi
 {{- end -}}
 

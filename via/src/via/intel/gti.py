@@ -24,7 +24,7 @@ from typing import Any
 from ngvm.gti import gti_unconfirmed, ssvc_exploitation  # noqa: F401  (re-exported)
 from ngvm.models import VulnRecord
 
-from .sources import SourceAuthError, SourceError, Sources
+from .sources import GtiBudgetError, SourceAuthError, SourceError, Sources
 
 UI_URL = "https://www.virustotal.com/gui/collection/{id}"
 
@@ -92,7 +92,7 @@ def enrich(sources: Sources, records: list[VulnRecord]) -> list[str]:
 
     def lookup(record: VulnRecord) -> str | None:
         nonlocal skipped
-        if stop:
+        if "reason" in stop:  # the key refused; a spent budget still reads the cached answers
             return None
         if not sources.gti_cached(record.cve_id) and sources.gti_calls >= settings.gti_max_calls:
             skipped += 1
@@ -101,6 +101,9 @@ def enrich(sources: Sources, records: list[VulnRecord]) -> list[str]:
             raw = sources.gti_vulnerability(record.cve_id)
         except SourceAuthError as exc:
             stop.setdefault("reason", str(exc))
+            return None
+        except GtiBudgetError:
+            stop.setdefault("budget", "1")
             return None
         except (SourceError, ValueError) as exc:
             return f"GTI {record.cve_id}: {exc}"
@@ -116,8 +119,14 @@ def enrich(sources: Sources, records: list[VulnRecord]) -> list[str]:
     notes += errors[:20]
     if len(errors) > 20:
         notes.append(f"GTI: {len(errors) - 20} more lookup errors")
-    if stop:
+    if "reason" in stop:
         notes.append(f"GTI: stopped, {stop['reason']}")
+    if "budget" in stop:
+        used = sources.gti_budget.used()
+        notes.append(
+            f"GTI: daily budget of {settings.gti_daily_calls} calls spent ({used['day']} UTC), "
+            f"{sources.gti_over_budget} CVE not looked up today (NGVM_GTI_DAILY_CALLS)"
+        )
     if skipped:
         notes.append(f"GTI: budget of {settings.gti_max_calls} lookups reached, {skipped} CVE not looked up")
     found = sum(1 for r in records if r.gti)

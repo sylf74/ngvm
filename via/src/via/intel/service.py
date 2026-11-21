@@ -40,7 +40,17 @@ from ngvm.service import serve as _serve
 
 from .collect import collect_direct
 from .gti import discovered
-from .sources import CVE_ID, SourceError, Sources, cache_validity_hours, purge_cache
+from .sources import (
+    CVE_ID,
+    GTI_BUDGET_FILE,
+    DailyBudget,
+    GtiBudgetError,
+    SourceError,
+    Sources,
+    cache_validity_hours,
+    purge_cache,
+)
+from .subjects import group, subject
 
 log = logging.getLogger("via.intel")
 ROLES = {"read", "radar"}
@@ -51,6 +61,7 @@ NEW_TTL = 600  # v0.28.2: seconds an answer of new_records is kept; `since` is f
 LOCK_WAIT = 3.0  # seconds new_records waits for a collection in progress before answering without it
 
 MAX_CVES = 5000
+MAX_GROUPED = 6000  # v0.29.0: records read at most to group or filter the new CVEs of a period
 MAX_TECH = 5000
 TEXT = 300  # characters of a technology field or a title
 KINDS = ("radar", "gti")
@@ -179,7 +190,11 @@ class IntelService:
         self._require(token, "read")
         from via import __version__
 
-        return {"service": "intel", "version": __version__, "cache": self.cache, "volume": self.storage()}
+        out = {"service": "intel", "version": __version__, "cache": self.cache, "volume": self.storage()}
+        src = self.settings.sources
+        if src.gti_enabled:  # v0.29.0: the day's GTI calls, every tenant together
+            out["gti"] = DailyBudget(Path(src.cache_dir) / GTI_BUDGET_FILE, src.gti_daily_calls).used()
+        return out
 
     # -- OSV (v0.23.12) ------------------------------------------------------------------------
     def osv_mirror(self) -> osvdb.OsvMirror:
@@ -249,7 +264,11 @@ class IntelService:
         """The CVE records published or updated in a period (v0.23.4, the chat's list_new_cves), from
         cvelistV5's deltaLog (about 30 days): `since`, `until` (moments, UTC), `change` (new, updated),
         `kev`, `min_cvss`, a page (`limit` 1 to 50, `offset`). Each item of the page with its record
-        in short: CVSS, KEV, EPSS, title; `at` is when CVE.org published the change."""
+        in short: CVSS, KEV, EPSS, title, CNA; `at` is when CVE.org published the change.
+
+        v0.29.0: `group=subject` answers one entry per subject (WordPress, Linux kernel, a vendor...)
+        instead of a page of CVEs, every CVE id of the subject with it; `subject=<name>` keeps the CVEs
+        of one subject. The answer says the period it was computed on (`since`, `until`)."""
         self._require(token, "read")
         try:
             since = _iso(moment(query.get("since") or "", "since")) if query.get("since") else ""
@@ -263,12 +282,16 @@ class IntelService:
         change = query.get("change", "")
         if change and change not in ("new", "updated"):
             raise Problem(HTTPStatus.BAD_REQUEST, "change: new or updated")
+        grouping = query.get("group", "")
+        if grouping and grouping != "subject":
+            raise Problem(HTTPStatus.BAD_REQUEST, "group: subject")
         # v0.28.2: the same question within NEW_TTL is answered from memory, and a question that comes
         # while the records are being collected does not wait behind them (84 s on 2026-11-20, a page
         # gave up): the last answer, said stale, or 503 at once.
         if since:
             since = _iso(_floor(dt.datetime.fromisoformat(since), NEW_TTL))
-        key = (since, until, change, query.get("kev", ""), min_cvss, limit, offset)
+        subject_wanted = query.get("subject", "")
+        key = (since, until, change, query.get("kev", ""), min_cvss, limit, offset, grouping, subject_wanted)
         cached = self._new_cache.get(key)
         if cached is not None and time.monotonic() - cached[0] < NEW_TTL:
             return cached[1]
@@ -296,6 +319,8 @@ class IntelService:
         offset: int,
     ) -> dict[str, Any]:
         """new_records' answer; the collection lock is held by the caller."""
+        grouping, subject_wanted = query.get("group") == "subject", query.get("subject", "")
+        notes: list[str] = []
         sources = self._sources()
         try:
             try:
@@ -310,27 +335,47 @@ class IntelService:
             filtered = query.get("kev") == "true" or min_cvss is not None
             ids = list(seen)
             records: dict[str, Any] = {}
-            if filtered:  # every record of the period is needed to filter on it
+            if filtered or grouping or subject_wanted:  # every record of the period is needed
+                if len(ids) > MAX_GROUPED:  # v0.29.0: bounded; the newest are kept
+                    notes.append(
+                        f"WARN {len(ids)} CVEs in the period, the newest {MAX_GROUPED} read: narrow the period "
+                        "(since) for a complete answer"
+                    )
+                    ids = ids[:MAX_GROUPED]
                 for start in range(0, len(ids), MAX_CVES):
-                    part = collect_direct(sources, ids[start : start + MAX_CVES])
+                    part = collect_direct(sources, ids[start : start + MAX_CVES], gti=False)
                     records.update({r.cve_id: r for r in part.records})
-                ids = [c for c in ids if c in records and _keep(records[c], query.get("kev") == "true", min_cvss)]
-            page_ids = ids[offset : offset + limit]
+                if filtered:
+                    keep_kev = query.get("kev") == "true"
+                    ids = [c for c in ids if c in records and _keep(records[c], keep_kev, min_cvss)]
+                if subject_wanted:
+                    ids = [c for c in ids if subject(records.get(c)).lower() == subject_wanted.lower()]
+            page_ids = [] if grouping else ids[offset : offset + limit]
             missing = [c for c in page_ids if c not in records]
             if missing:
-                records.update({r.cve_id: r for r in collect_direct(sources, missing).records})
+                records.update({r.cve_id: r for r in collect_direct(sources, missing, gti=False).records})
         finally:
             sources.close()
         counts = {
             "new": sum(1 for c in ids if seen[c][0] == "new"),
             "updated": sum(1 for c in ids if seen[c][0] == "updated"),
         }
-        items = [_brief(c, seen[c][0], seen[c][1], records.get(c)) for c in page_ids]
-        out: dict[str, Any] = {"total": len(ids), "counts": counts, "offset": offset, "limit": limit, "items": items}
-        if offset + limit < len(ids):
-            out["next_offset"] = offset + limit
+        out: dict[str, Any] = {"since": since or None, "until": until or None, "total": len(ids), "counts": counts}
         if entries:
             out["oldest"] = entries[-1][2]  # the deltaLog reaches back to this moment, no further
+        if not since and entries:
+            notes.append(f"no since: the whole deltaLog, from {entries[-1][2]} (about 30 days), not one day")
+        if grouping:
+            out["subjects"] = group([(c, *seen[c]) for c in ids], records)
+        else:
+            out.update({"offset": offset, "limit": limit})
+            out["items"] = [_brief(c, seen[c][0], seen[c][1], records.get(c)) for c in page_ids]
+            if offset + limit < len(ids):
+                out["next_offset"] = offset + limit
+        if subject_wanted:
+            out["subject"] = subject_wanted
+        if notes:
+            out["notes"] = notes
         return out
 
     def technologies(self, token: str | None, body: dict[str, Any]) -> dict[str, Any]:
@@ -421,6 +466,9 @@ class IntelService:
                     calls += 1
                     try:
                         found = discovered(sources, query)
+                    except GtiBudgetError as exc:
+                        notes.append(str(exc))
+                        break
                     except SourceError as exc:
                         notes.append(f"GTI {product}: {exc}")
                         if "credentials refused" in str(exc) or "API key missing" in str(exc):
@@ -457,7 +505,7 @@ def _brief(cve: str, change: str, at: str, record: Any) -> dict[str, Any]:
         "published": record.published, "updated": record.updated,
         "title": _clean(record.description, 300),
         "cvss": best.score if best else None, "severity": (best.severity or "").lower() if best else "",
-        "kev": record.in_kev, "epss": record.epss,
+        "kev": record.in_kev, "epss": record.epss, "cna": record.assigner, "subject": subject(record),
         "products": sorted({f"{a.vendor} {a.product}".strip() for a in record.affected if a.product})[:5],
     })  # fmt: skip
     return out

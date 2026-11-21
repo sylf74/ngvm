@@ -20,9 +20,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from via.alert import journal, word
+from via.alert import journal, mailhtml, word
 from via.alert.contacts import Contact, recipients
-from via.alert.fiche import markdown_html
 from via.alert.mail import MailError, message, send
 from via.alert.translate import TranslationError, text_hash, translate
 
@@ -107,8 +106,8 @@ def send_validated(
                     if text_hash(ref) != detail.get("reference_hash"):
                         raise ValueError("the reference changed after the validation: not sent")
                     files = _word(a, work, lang, text, profile, profile_path, attach, _word_template, _today)
-                    title = next((line[2:] for line in text.splitlines() if line.startswith("# ")), a.get("title", ""))
-                    msg = message(f"[CERT Alert] {title}", markdown_html(text), text, emails, attachments=files)
+                    subject = mailhtml.subject(text, a, lang, a.get("title", ""))  # v0.29.0: the kind, the title
+                    msg = message(subject, mailhtml.render(text, a, lang), text, emails, attachments=files)
                     result = send(msg, work / "outbox")
                     print(f"{tenant}: {a['id']}: {result} — {', '.join(emails)} [{lang}]", flush=True)
                     events.append(journal.event("sent", a, to=emails, result=result, language=lang,

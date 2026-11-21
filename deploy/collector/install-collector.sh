@@ -137,11 +137,27 @@ CONNECTORS=$(sed -n 's/^  - {name: \([a-z-]*\),.*/\1/p' "$C/collector.yaml")
 [ -n "$CONNECTORS" ] || fail "no connector: the targets file has neither targets nor --openvas-hosts"
 
 step "image $IMAGE"
+# v0.29.0: with Podman (docker may be its alias), a login goes to $XDG_RUNTIME_DIR/containers/auth.json
+# (/run/containers/0, lost at reboot) and that file wins over the persistent one: a stale login there
+# (an old robot account) made the pull of a new image fail. The login goes to the persistent file, the
+# registry's entry of the runtime file is removed, and the pull reads the persistent file.
+AUTH=()
+if docker --version 2>/dev/null | grep -qi podman; then
+  AUTHFILE=/root/.config/containers/auth.json
+  install -d -m 0700 /root/.config/containers
+  for stale in "${XDG_RUNTIME_DIR:-/run/containers/0}/containers/auth.json" /run/containers/0/auth.json; do
+    if [ -s "$stale" ] && grep -q "\"$REGISTRY\"" "$stale"; then
+      docker logout --authfile "$stale" "$REGISTRY" > /dev/null 2>&1 || true
+      echo "stale login to $REGISTRY removed from $stale"
+    fi
+  done
+  AUTH=(--authfile "$AUTHFILE")
+fi
 if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
   if [ -s "$HERE/registry-user.txt" ] && [ -s "$HERE/registry-password.txt" ]; then
-    docker login "$REGISTRY" -u "$(cat "$HERE/registry-user.txt")" --password-stdin < "$HERE/registry-password.txt"
+    docker login "${AUTH[@]}" "$REGISTRY" -u "$(cat "$HERE/registry-user.txt")" --password-stdin < "$HERE/registry-password.txt"
   fi
-  docker pull -q "$IMAGE"
+  docker pull "${AUTH[@]}" -q "$IMAGE"
 fi
 rm -f "$HERE/registry-password.txt"
 

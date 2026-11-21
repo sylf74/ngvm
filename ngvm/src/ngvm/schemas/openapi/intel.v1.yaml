@@ -99,17 +99,39 @@ paths:
         - {name: min_cvss, in: query, schema: {type: number, minimum: 0, maximum: 10}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
         - {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: group, in: query, schema: {type: string, enum: [subject]}, description: "since v0.29.0: one entry per subject (WordPress, Linux kernel, a vendor) instead of a page"}
+        - {name: subject, in: query, schema: {type: string}, description: "since v0.29.0: only the CVEs of this subject"}
       responses:
         "200":
-          description: A page of the period
+          description: A page of the period, or its subjects (group=subject)
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  since: {type: [string, "null"], description: "the period computed on (since v0.29.0)"}
+                  until: {type: [string, "null"]}
                   total: {type: integer}
                   counts: {type: object, additionalProperties: {type: integer}}
                   oldest: {type: string}
+                  notes: {type: array, items: {type: string}}
+                  subjects:
+                    type: array
+                    description: "group=subject (since v0.29.0): ranked by KEV, highest CVSS, then count"
+                    items:
+                      type: object
+                      required: [subject, count, cves]
+                      properties:
+                        subject: {type: string}
+                        count: {type: integer}
+                        new: {type: integer}
+                        updated: {type: integer}
+                        max_cvss: {type: [number, "null"]}
+                        kev: {type: integer}
+                        max_epss: {type: [number, "null"]}
+                        cnas: {type: array, items: {type: string}}
+                        latest: {type: string}
+                        cves: {type: array, items: {type: string}}
                   items:
                     type: array
                     items:
@@ -122,6 +144,8 @@ paths:
                         cvss: {type: [number, "null"]}
                         kev: {type: boolean}
                         epss: {type: [number, "null"]}
+                        cna: {type: [string, "null"]}
+                        subject: {type: string}
         "400": {$ref: "#/components/responses/Problem"}
         "401": {$ref: "#/components/responses/Problem"}
         "502": {$ref: "#/components/responses/Problem"}

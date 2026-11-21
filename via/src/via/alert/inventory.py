@@ -35,6 +35,9 @@ class Inventory:
     as_of: str = ""  # date of the most recent observation
     # The tenant's applications table (v0.23.3): the CPE of each application of an EDR.
     applications: dict[str, apps.Row] = field(default_factory=dict)
+    # The last run's decision of each (asset id, CVE) (v0.29.0): ACT, ATTEND or TRACK; the kind of
+    # an alert mail follows it (alerts.kinds of the profile).
+    decisions: dict[tuple[str, str], str] = field(default_factory=dict)
 
     def age_days(self, now: dt.datetime | None = None) -> float | None:
         if not self.as_of:
@@ -61,7 +64,10 @@ def load(directory: str | Path, client_id: str) -> Inventory | None:
         if doc["client_id"] != client_id:
             raise ExchangeError(f"{compact} belongs to {doc['client_id']!r}, not {client_id!r}")
         as_of = max((a.last_seen for a in assets.values()), default="")
-        return Inventory(client_id, assets, _expand(doc, as_of), as_of)
+        inv = Inventory(client_id, assets, _expand(doc, as_of), as_of)
+        for asset, by_cve in (doc.get("decisions") or {}).items():
+            inv.decisions.update({(asset, cve): level for cve, level in by_cve.items()})
+        return inv
     if (base / "findings.json").exists():
         _, found, _ = read_findings(base / "findings.json")
         for f in found:
@@ -93,7 +99,9 @@ def fetch(
 WATCH_FINDINGS_FILE = "watch-findings.json"
 
 
-def for_watch(assets: dict[str, Any], findings: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def for_watch(
+    assets: dict[str, Any], findings: dict[str, Any], triage: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """The inventory as the watch reads it: the assets without their scan dates (v0.23.18), and the
     findings in the compact `ngvm.watch_findings/1` (v0.23.19). Per asset, each finding as
     [cve, status, affected versions, [[source, package, installed, fixed], ...]]: what the alert sheet
@@ -121,6 +129,14 @@ def for_watch(assets: dict[str, Any], findings: dict[str, Any]) -> tuple[dict[st
         "client_id": findings.get("client_id", ""),
         "assets": by_asset,
     }
+    if triage:  # v0.29.0: the run's decision of each (asset, CVE), for the kind of the alert mails
+        decisions: dict[str, dict[str, str]] = {}
+        for row in triage.get("rows") or []:
+            asset = row.get("asset_id_full") or row.get("asset_id")
+            level = row.get("delivery_decision")
+            if asset and row.get("cve_id") and level in ("ACT", "ATTEND", "TRACK"):
+                decisions.setdefault(asset, {})[row["cve_id"]] = level
+        compact["decisions"] = decisions
     return slim_assets, compact
 
 

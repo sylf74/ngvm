@@ -178,6 +178,12 @@ class Alert:
     # carrying a package named like the product, its version unknown against the record (possible).
     exposed: list[tuple[Asset, Exposure]] = field(default_factory=list)
     possible: list[tuple[Asset, str]] = field(default_factory=list)
+    kind: Any = None  # v0.29.0: kinds.Kind, the kind of the mail (Alerte, Hot Topic, Information)
+    # v0.29.0, set with the kind: the client's name, time zone and SLA (ngvm.sla.SlaPolicy or None),
+    # for the times of the sources and the source of the recommended delay.
+    client_name: str = ""
+    timezone: str = "UTC"
+    sla: Any = None
 
 
 # Levels of proof of an asset named by an alert (D20), strongest first.

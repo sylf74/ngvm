@@ -20,8 +20,9 @@ GUIDE = ROOT / "docs" / "chat-questions.md"
 
 THEMES = [
     ("The watch and the new CVEs", {
-        "list_new_cves": "the CVEs published or updated in a period, whoever they concern, and the alert the watch "
-        "drafted for this tenant, if any",
+        "list_new_cves": "the CVEs published or updated in a period (by default the last 24 hours), whoever they "
+        "concern: an overview by subject (WordPress, Linux kernel, a vendor), then the CVEs of one subject with the "
+        "alert the watch drafted for this tenant, if any",
         "list_alerts": "the watch's alerts for the tenant in a period, with their status (pending, validated, sent...)",
         "get_alert": "one alert: its sheet for the client and its journal (drafted, validated, sent, by whom)",
         "list_radar_events": "the major vulnerabilities the watch team found and validated (radar)",

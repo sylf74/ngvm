@@ -20,9 +20,10 @@ every 10 min   the sources of config/watch-sources.yaml, in three categories:
                  concerned, in one passage are one alert with every CVE (v0.28.2: a burst of the
                  Linux kernel's CNA made 150 mails in three hours)
       v
-               alert sheet (English reference, team layout): why now and from which source, table of the
-               assets concerned, CVE, product, type, CVSS, main impact, exploitation status, fixes,
-               description, delay, links
+               alert sheet (English reference, team layout): the CVE and its sources (who published it,
+               exactly when, the reference link), why now, table of the assets concerned, product,
+               type, CVSS, main impact, exploitation status, fixes, description, delay and its source,
+               links; its kind: Alerte, Hot Topic or Information (v0.29.0)
       v
                mail to the analysts (NGVM_ANALYST_TO), naming the recipients, with a link
       v
@@ -92,6 +93,60 @@ fixed version or "no fix yet". Before the distribution has published (a new CVE 
 a host with a package named like the product is `possible`. The job log says on how many hosts the
 packages are listed (`packages listed on N hosts`); a v0.22.2 collector does not give the source
 package of the libraries (`openssl-libs` of `openssl`): move the collectors to v0.23.0.
+
+## The mail: its kind and its layout (v0.29.0)
+
+Every alert mail has a kind, the first thing the client sees: the tag of its header and the start of
+its subject (`[Alert] …`, in French `[Alerte] …`).
+
+| Kind | Tag | Default rule (first that matches) |
+| --- | --- | --- |
+| Alerte | red `#b42318` | triaged: the last run's decision is ACT; not triaged: the CVE is in KEV |
+| Hot Topic | orange `#c2410c` | triaged: ATTEND with KEV, or ATTEND with EPSS ≥ 0.10; not triaged: not in KEV, EPSS ≥ 0.80 |
+| Information | blue `#1d5fa8` | no rule matched |
+
+"Triaged" means the last daily run decided a CVE of the alert on an asset of the tenant: the step
+`inventory` sends the run's decisions to the watch with the assets (`decisions` of
+`ngvm.watch_findings/1`); a CVE newer than the run is not triaged. With several assets the strongest
+decision counts. The rules are the profile's, `alerts.kinds`, each list replacing its default; the
+thresholds are values of the profile:
+
+```yaml
+alerts:
+  kinds:
+    triaged:
+      - {kind: alerte, when: {decision: ACT}}
+      - {kind: hot_topic, when: {decision: ATTEND, kev: true}}
+      - {kind: hot_topic, when: {decision: ATTEND, epss_min: 0.10}}
+    untriaged:
+      - {kind: alerte, when: {kev: true}}
+      - {kind: hot_topic, when: {kev: false, epss_min: 0.80}}
+```
+
+A rule may test `decision` (one or a list), `kev`, `epss_min` (0 to 1) and `cvss_min`. The line
+under the title says which rule gave the kind ("Classed Alert: CVE in the KEV catalog, not yet
+assessed by the triage"); the journal keeps it (`kind` of the alert). The watch's `level` (urgent,
+info) still decides whether an alert is drafted at all.
+
+The sheet opens on **CVE and sources**: each CVE with its CVSS, KEV and EPSS, then who published
+what and when, oldest first, in the client's time zone and in UTC (the time zone of its `sla`, else
+Europe/Paris for a French client, else UTC): the CNA of the record (`assignerShortName`, its vendor
+advisory or the record on cve.org), the watch's publication (CERT-FR, a vendor, a research source),
+the vendor advisories it cites, the addition to KEV, the radar's sources, GTI's first exploitation (a
+date, never its prose). The **recommended delay** says where it comes from: the client's SLA when one
+of its rules holds on what the watch knows (KEV, exposure, EPSS, CVSS, the run's decision), with the
+BOD 26-04 delay of the same case on the next line; else CISA BOD 26-04 with its inputs (KEV, exposure,
+automatable, technical impact), and, when the SLA's rules need the triage's decision, that the
+contractual delay is set by the next daily run.
+
+The HTML is laid out from the sheet's Markdown (`via.alert.mailhtml`), so a sheet an analyst edits
+or translates keeps the layout: a centred table of 680 px with inline styles (what mail clients and
+Outlook keep), a header band tinted by the kind, the CVE block in slate blue with white text, the
+assets as a table, product, type, CVSS and impact in one table, the exploitation status in four
+tiles, the delay in a box, the vendor and CERT-FR advisories as buttons. Outlook for Windows draws
+square corners. The mail names no product: the sender is `NGVM_MAIL_FROM`, the footer gives the
+alert's reference and when it was issued. The text part of the mail is the Markdown. The analysts'
+mail carries the validation note above the sheet; it is never in the client's mail.
 
 ## Validation and sending (v0.11.3)
 

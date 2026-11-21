@@ -7,6 +7,8 @@ questions:
   - {q: "Quelles CVE ont été publiées depuis hier, avec leur heure de découverte ?", tool: list_new_cves, params: [since], why: published}
   - {q: "Quelles nouvelles CVE critiques depuis lundi 9 h ?", tool: list_new_cves, params: [since, min_cvss], why: critical}
   - {q: "Quelles CVE ont été ajoutées au KEV cette semaine ?", tool: list_new_cves, params: [since, kev], why: KEV}
+  - {q: "Quelles nouvelles vulnérabilités depuis hier ?", tool: list_new_cves, params: [], why: one entry per subject}
+  - {q: "Lesquelles concernent WordPress ?", tool: list_new_cves, params: [subject], why: the CVEs of one subject}
   - {q: "Quelles alertes entre hier 18 h et ce matin 9 h ?", tool: list_alerts, params: [since, until], why: alerts}
   - {q: "Que dit l'alerte numéro 42 ?", tool: get_alert, params: [alert], why: sheet}
   - {q: "Qu'a trouvé le radar depuis lundi ?", tool: list_radar_events, params: [since], why: radar}

@@ -63,6 +63,8 @@ class VulnRecord:
     # Package advisories of the distributions (D20, since v0.23.0, via.intel.packages): {distro,
     # name (source package), introduced, fixed, last_affected, state, advisory, url, source}.
     packages: list[dict[str, str]] = field(default_factory=list)
+    # The CNA that published the record: cveMetadata.assignerShortName (since v0.29.0), e.g. WPScan.
+    assigner: str | None = None
 
     @property
     def in_kev(self) -> bool:

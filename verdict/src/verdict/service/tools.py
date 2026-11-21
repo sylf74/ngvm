@@ -43,6 +43,14 @@ log = logging.getLogger("verdict.tools")
 ROLES = {"chat"}
 MAX_CHARS = 8000
 PAGE_MAX = 20
+NEW_CVES_SAMPLE = 5  # v0.29.0: CVE ids shown per subject of the overview of the new CVEs
+
+
+def _subject_rank(g: dict[str, Any]) -> tuple:
+    """A subject of the new CVEs: KEV first, then the tenant's alerts, the highest CVSS, the volume."""
+    return (-g.get("kev", 0), -g.get("alerts", 0), -(g.get("max_cvss") or 0), -g.get("count", 0), g.get("subject", ""))
+
+
 TEXT_MAX = 600
 LIST_MAX = 10
 EXPORT_MAX = 500
@@ -415,17 +423,28 @@ OPERATIONS: list[tuple[str, str, str, list[dict[str, Any]], str]] = [
     (
         "/new-cves",
         "list_new_cves",
-        "The CVEs published or updated in a period (v0.23.4), whoever they concern: newest first, each with "
-        "`at` (when CVE.org published it, the moment NGVM can see it), its change (new or updated), CVSS, "
-        "severity, KEV, EPSS, products, and `alert` when the watch drafted an alert for this tenant about it "
-        "(else `alert: null`: it did not concern the tenant's assets or was below the profile's level); with "
-        "`total` and `counts` computed by the service; `oldest` is as far back as it can see (about 30 days). "
-        "Use it for 'which vulnerabilities were published since yesterday', 'new critical CVEs since "
-        "Monday 9:00, with their time of discovery', 'CVEs added to KEV this week'. Give the counts as "
-        "returned, never count the items yourself.",
+        "The CVEs published or updated in a period (v0.23.4), whoever they concern. By default (v0.29.0) an "
+        "overview: one entry per subject (WordPress, Linux kernel, else the vendor), ranked by KEV, tenant "
+        "alert, highest CVSS, then count, each with its count (new, updated), highest CVSS, KEV and EPSS, "
+        "the CNAs, the tenant's alerts and a few CVE ids. Answer with one bullet per subject, never one per "
+        "CVE: a burst of one CNA must not hide the rest. For the CVEs of one subject, ask again with "
+        "`subject`; each CVE then comes with `at` (when CVE.org published it), its change, CVSS, KEV, "
+        "EPSS, CNA, products and `alert` (the alert the watch drafted for this tenant, else null). "
+        "`group=none` lists the CVEs of the whole period. Without since and until the period is the "
+        "last 24 hours; say the period the answer gives (`since`, `until`). Use it for 'which "
+        "vulnerabilities were published since yesterday', 'new critical CVEs since Monday 9:00', 'CVEs "
+        "added to KEV this week', 'the WordPress CVEs of today'. Give the counts as returned, never count "
+        "the items yourself.",
         [
-            _q("since", "string", _WHEN.format(what="published on or after")),
+            _q("since", "string", _WHEN.format(what="published on or after") + " Default: 24 hours ago."),
             _q("until", "string", _WHEN.format(what="published on or before") + " A day alone includes all of it."),
+            _q("subject", "string", "Only the CVEs of this subject, as the overview names it (e.g. WordPress)"),
+            _q(
+                "group",
+                "string",
+                "subject (default: the overview) or none (the CVEs one by one)",
+                enum=["subject", "none"],
+            ),  # fmt: skip
             _q("change", "string", "new (first published) or updated", enum=["new", "updated"]),
             _q("kev", "boolean", "true: only CVEs in the CISA KEV catalogue"),
             _q("min_cvss", "number", "Lowest CVSS base score, 0 to 10 (e.g. 9 for critical)"),
@@ -1114,14 +1133,21 @@ class Tools:
 
     def _new_cves(self, query: dict[str, str]) -> Any:
         """The CVEs published in a period (v0.23.4), from the shared service, each with the alert the
-        watch drafted for this tenant about it, if any."""
+        watch drafted for this tenant about it, if any. v0.29.0: an overview by subject by default, the
+        last 24 hours when no period is asked."""
         if self._intel is None:
             raise Problem(
                 HTTPStatus.SERVICE_UNAVAILABLE, "no shared intelligence service for this tenant: no list of new CVEs"
             )
-        params = {
-            k: query[k] for k in ("since", "until", "change", "kev", "min_cvss", "limit", "offset") if query.get(k)
-        }
+        keys = ("since", "until", "change", "kev", "min_cvss", "limit", "offset", "subject")
+        params = {k: query[k] for k in keys if query.get(k)}
+        period_note = ""
+        if not params.get("since") and not params.get("until"):
+            params["since"] = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)).isoformat(timespec="minutes")
+            period_note = "no period asked: the last 24 hours"
+        grouped = query.get("group", "") != "none" and not params.get("subject")
+        if grouped:
+            params["group"] = "subject"
         try:
             r = self._intel.get("/v1/records/new", params=params)
         except httpx.HTTPError as exc:
@@ -1135,17 +1161,29 @@ class Tools:
             raise Problem(status, detail or f"shared intelligence service answered {r.status_code}")
         answer = copy.deepcopy(r.json())
         alerts: dict[str, str] = {}
-        if self._via is not None and answer.get("items"):
-            since = min(i["at"] for i in answer["items"])
+        items = answer.get("items") or []
+        start = min((i["at"] for i in items), default="") or answer.get("since") or params["since"]
+        if self._via is not None and (items or answer.get("subjects")):
             try:
-                got = self._via.get(f"/v1/tenants/{self.tenant}/alerts", params={"since": since, "limit": "200"})
+                got = self._via.get(f"/v1/tenants/{self.tenant}/alerts", params={"since": start, "limit": "200"})
                 for a in got.json().get("items") or [] if got.status_code == 200 else []:
                     for c in a.get("cves") or []:
                         alerts.setdefault(c.upper(), a["id"])
             except (httpx.HTTPError, ValueError):
                 answer["note"] = "the watch service was not reached: `alert` unknown"
-        for item in answer.get("items") or []:
+        for item in items:
             item["alert"] = alerts.get(item["cve"].upper()) if self._via is not None else None
+        if grouped:
+            for g in answer.get("subjects") or []:
+                ids = g.get("cves") or []
+                g["alerts"] = len({alerts[c.upper()] for c in ids if c.upper() in alerts})
+                g["cves"] = ids[:NEW_CVES_SAMPLE]
+                if len(ids) > NEW_CVES_SAMPLE:
+                    g["more_cves"] = len(ids) - NEW_CVES_SAMPLE
+            answer["subjects"] = sorted(answer.get("subjects") or [], key=_subject_rank)
+            answer["next"] = "the CVEs of one subject: list_new_cves with subject=<its name>"
+        if period_note:
+            answer.setdefault("notes", []).insert(0, period_note)
         answer.update({"query": params, "timezone": self.timezone})
         answer["source"] = "NGVM shared intelligence service: CVE records from CVE.org (cvelistV5), KEV, EPSS"
         return fit(answer, self.max_chars)

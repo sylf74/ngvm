@@ -154,7 +154,7 @@ kubectl -n ngvm-lab run dispatch-reader --rm -i --restart=Never --labels=ngvm.io
 | --- | --- | --- |
 | `iTop refused: code 1: ... Invalid login` | Wrong account or password | The account and `NGVM_DISPATCH_<TARGET>_PASSWORD`, then `deploy-k8s` |
 | `iTop refused: code 100` (or 1) `... caller_id`, `org_id`, `team_id` | The Person, the organisation or the Team of `dispatch.yaml` does not exist in iTop under that name | The names in `dispatch.yaml` |
-| `iTop refused: code 100: Error: caller_id: Several items found (2)`; since v0.23.19 also `iTop: 2 Persons with name … in …` | Two Persons carry the name of `caller` in the organisation (before v0.23.3: in any organisation) | Remove the duplicate in iTop, or give the Person's e-mail as `caller`; the tickets left `proposed` are sent by the next daily run, the requested ones too |
+| `iTop refused: code 100: Error: caller_id: Several items found (2)`; since v0.23.19 also `iTop: 2 Persons with name … in …` | Two Persons carry the name of `caller` in the organisation (before v0.23.3: in any organisation); since v0.29.0 also `iTop: 2 Persons with email …`: `caller` is already an e-mail that two Persons share | Remove the duplicate in iTop, or give `caller` the e-mail of a Person of its own (the Person `NGVM` of §1, with its own address); the tickets left `proposed` are sent by the next daily run, the requested ones too |
 | `iTop refused: ... ev_resolve` | iTop does not allow resolving a request in its current status (e.g. never assigned) | Nothing: the ticket is fixed in NGVM; the team closes it in iTop |
 | `iTop not reached` | Address, DNS, firewall, certificate | `NGVM_DISPATCH_<TARGET>_CA`, `NGVM_DISPATCH_EGRESS` |
 | `decision service answered 404` | No run pushed yet | The next daily run |

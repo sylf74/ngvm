@@ -36,9 +36,8 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from ngvm import applications as apps
 from ngvm.actions import ActionError, ActionStore
 from ngvm.audit import AuditLog
-from via.alert import journal
+from via.alert import journal, mailhtml
 from via.alert.contacts import Contact, ContactsError, load_contacts
-from via.alert.fiche import markdown_html
 from via.alert.i18n import name as language_name
 from via.alert.translate import text_hash
 
@@ -495,7 +494,7 @@ class Review:
             )
         body = (
             f"{head}{steps}{word}<h2>Reference (English)</h2>"
-            f'<div class="sheet">{markdown_html(self.current(a))}</div>'
+            f'<div class="sheet">{mailhtml.render(self.current(a), a)}</div>'
             f"{self._translations(a)}<h2>History</h2><ul>{events}</ul>"
         )
         return self.page(a.get("title", aid), body, user)
@@ -557,7 +556,7 @@ class Review:
             out.append(
                 f"<h2>{html.escape(language_name(lang))}</h2>"
                 f'<p><span class="badge {state}">{STATE_TEXT[state]}</span>{why}{source}{edit}</p>'
-                + (f'<div class="sheet">{markdown_html(text)}</div>' if text and state != "failed" else "")
+                + (f'<div class="sheet">{mailhtml.render(text, a, lang)}</div>' if text and state != "failed" else "")
             )
         return "".join(out)
 
