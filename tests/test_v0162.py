@@ -57,7 +57,7 @@ def test_the_watch_runs_without_detect_nor_verdict(tmp_path):
     [pan] = [a for a in index if "CERTFR-2024-ALE-006" in a["id"]]
     assert pan["level"] == "urgent"
     md = (tmp_path / "alerts" / f"{pan['id']}.md").read_text()
-    assert "## Recommended remediation delay" in md and "(CISA BOD 26-04)" in md
+    assert "## Recommended remediation delay" in md and "CISA BOD 26-04" in md  # its source since v0.29.0
 
 
 def _record(in_kev=False, adp_ssvc=None, cvss=None) -> VulnRecord:

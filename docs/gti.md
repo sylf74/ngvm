@@ -62,8 +62,27 @@ at the end (`GTI: n/m CVE known to GTI (k lookups, rest from cache)`). A refused
 ## Quota
 
 Answers are cached 24 h (`gti_cache_hours`) in the job cache. `gti_max_calls` caps the network
-lookups per run; CVEs not in KEV and with the highest CVSS and EPSS are looked up first, since they
-are the ones GTI can move. HTTP 429 answers are retried (three times, honouring `Retry-After`).
+lookups per request; CVEs not in KEV and with the highest CVSS and EPSS are looked up first, since
+they are the ones GTI can move. HTTP 429 answers are retried (three times, honouring `Retry-After`).
+
+Since v0.29.0 the calls of a day are capped as well, whatever the number of requests:
+
+| Setting | Variable | Default | What |
+| --- | --- | --- | --- |
+| `gti_daily_calls` | `NGVM_GTI_DAILY_CALLS` | 1000 | Network calls (lookups and searches) of one UTC day, every request and tenant of the cache together; 0: no cap |
+| `gti_cache_hours` | `NGVM_GTI_CACHE_HOURS` | 24 | How long an answer is read from the cache |
+| `gti_missing_hours` | `NGVM_GTI_MISSING_HOURS` | 72 | How long a CVE that GTI does not know (HTTP 404) is not asked again |
+| `gti_max_calls` | `NGVM_GTI_MAX_CALLS` | 2000 | Network lookups of one request |
+
+The day's count is a file of the cache volume, `gti-budget.state`, updated under a lock: the shared
+service answers its batches (`POST /v1/records`, one request each) from one budget. Before
+v0.29.0 the cap was per request, so a run asked in 29 batches was not capped, and a 404 was asked
+again at every request. A spent budget is said once per request
+(`GTI: daily budget of N calls spent (YYYY-MM-DD UTC), k CVE not looked up today`); cached answers
+are still read. The shared service's `GET /v1/status` gives `gti: {day, calls, daily}`.
+
+The key goes to `www.virustotal.com` directly (or through the corporate proxy), never through the
+relay of the public sources.
 
 Test the key by hand from the runner:
 

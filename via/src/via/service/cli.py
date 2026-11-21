@@ -294,7 +294,13 @@ def cmd_push_inventory(args: argparse.Namespace) -> int:
         print(f"{args.tenant}: no inventory to push ({exc})", file=sys.stderr)
         return 1
     count = len(findings.get("findings", []))
-    assets, findings = for_watch(assets, findings)
+    triage = None
+    if getattr(args, "triage", None):  # v0.29.0: the run's decisions, for the kind of the alert mails
+        try:
+            triage = json.loads(Path(args.triage).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"{args.tenant}: WARN triage not read ({exc}): the alerts are classed as not triaged")
+    assets, findings = for_watch(assets, findings, triage)
     # the sizes, so that a refusal (413) says which part is large (v0.23.18)
     before = sum(map(len, raw.values()))
     del raw
@@ -317,6 +323,7 @@ def cmd_push_inventory(args: argparse.Namespace) -> int:
     print(
         f"{args.tenant}: inventory pushed to the watch service ({len(assets.get('assets', []))} assets, "
         f"{count} findings; {size})"
+        + (f"; {sum(len(v) for v in findings['decisions'].values())} decisions of the run" if triage else "")
     )
     return 0
 
@@ -394,6 +401,7 @@ def main(argv: list[str]) -> int:
     i = ss.add_parser("push-inventory", help="the daily run's assets and findings, for the watch")
     _common(i)
     i.add_argument("--assets-dir", required=True, help="work/assets/<client>, written by verdict assets")
+    i.add_argument("--triage", help="the run's triage.json: its decisions go with the inventory (v0.29.0)")
     i.set_defaults(func=cmd_push_inventory)
     args = parser.parse_args(argv)
     return args.func(args)

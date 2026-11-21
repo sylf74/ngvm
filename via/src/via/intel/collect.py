@@ -146,7 +146,7 @@ def add_packages(sources: Sources, records: list[VulnRecord]) -> list[str]:
     return notes
 
 
-def collect_direct(sources: Sources, cve_ids: list[str], packages: bool = False) -> Collection:
+def collect_direct(sources: Sources, cve_ids: list[str], packages: bool = False, gti: bool = True) -> Collection:
     out = Collection(requested=list(cve_ids))
     kev = sources.kev()
     epss = sources.epss(cve_ids)
@@ -173,7 +173,9 @@ def collect_direct(sources: Sources, cve_ids: list[str], packages: bool = False)
             record.epss, record.epss_percentile = epss[cve_id]
             record.epss_date = sources.epss_dates.get(cve_id)
         out.records.append(record)
-    if getattr(sources.settings, "gti_enabled", False):
+    # gti=False (v0.29.0): the list of new CVEs reads every record of a period; it needs no GTI fact,
+    # and asking GTI for each of them spent the budget of the day.
+    if gti and getattr(sources.settings, "gti_enabled", False):
         out.notes = enrich(sources, out.records)
     if packages:
         out.notes += add_packages(sources, out.records)

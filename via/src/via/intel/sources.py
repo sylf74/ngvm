@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import datetime as dt
 import errno
+import fcntl
 import hashlib
 import json
 import os
 import re
 import sys
+import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -96,6 +99,10 @@ class SourceAuthError(SourceError):
     """The source refused the credentials (HTTP 401 / 403): stop asking it for this run."""
 
 
+class GtiBudgetError(SourceError):
+    """The GTI calls of the day are spent (v0.29.0): no more lookup until the next UTC day."""
+
+
 class CacheFullError(SourceError):
     """The volume of the cache is full: said as it is, not as a trace of a file half written."""
 
@@ -148,8 +155,64 @@ def purge_cache(cache_dir: str | Path, max_age_hours: float, now: float | None =
 def cache_validity_hours(settings: SourceSettings) -> float:
     """The longest time a cache file is read again: older, it is only room taken."""
     return max(
-        settings.cve_cache_hours, settings.feed_cache_hours, settings.gti_cache_hours, settings.packages_cache_hours
+        settings.cve_cache_hours,
+        settings.feed_cache_hours,
+        settings.gti_cache_hours,
+        settings.gti_missing_hours,
+        settings.packages_cache_hours,
     )
+
+
+GTI_BUDGET_FILE = "gti-budget.state"  # not a cache suffix: purge_cache never removes it
+
+
+class DailyBudget:
+    """The GTI calls of one UTC day, shared by every request, thread and process that uses this cache
+    directory (v0.29.0): a file `{"day": "YYYY-MM-DD", "calls": n}` updated under an exclusive lock.
+    `take()` counts one call and says whether it was within the budget."""
+
+    _lock = threading.Lock()
+
+    def __init__(self, path: Path, daily: int, now: Callable[[], dt.datetime] | None = None):
+        self.path, self.daily = path, daily
+        self._now = now or (lambda: dt.datetime.now(dt.UTC))
+
+    def _day(self) -> str:
+        return self._now().astimezone(dt.UTC).date().isoformat()
+
+    def _read(self, handle: Any) -> dict[str, Any]:
+        handle.seek(0)
+        try:
+            data = json.loads(handle.read() or "{}")
+        except ValueError:
+            data = {}
+        return data if isinstance(data, dict) and data.get("day") == self._day() else {"day": self._day(), "calls": 0}
+
+    def used(self) -> dict[str, Any]:
+        """{"day", "calls", "daily"} of today; the budget untouched."""
+        if not self.path.exists():
+            return {"day": self._day(), "calls": 0, "daily": self.daily}
+        with self._lock, open(self.path, encoding="utf-8") as handle:
+            return {**self._read(handle), "daily": self.daily}
+
+    def take(self) -> bool:
+        if self.daily <= 0:
+            return True
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock, open(self.path, "a+", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                data = self._read(handle)
+                if int(data.get("calls") or 0) >= self.daily:
+                    return False
+                data["calls"] = int(data.get("calls") or 0) + 1
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps(data))
+                handle.flush()
+                return True
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def cve_bucket(cve_id: str) -> tuple[str, str]:
@@ -179,6 +242,8 @@ class Sources:
         )
         self._kev: dict[str, dict[str, Any]] | None = None
         self.gti_calls = 0  # network lookups made to GTI in this run (cache hits excluded)
+        self.gti_budget = DailyBudget(self.cache / GTI_BUDGET_FILE, settings.gti_daily_calls)
+        self.gti_over_budget = 0  # lookups not made because the day's budget was spent (v0.29.0)
         self.cache_repaired = 0  # cache files found unreadable and fetched again (v0.26.0)
         self.cache_full = ""  # why the cache keeps nothing more in this run ("" when it does)
         self.epss_dates: dict[str, str] = {}  # cve -> day of its EPSS score (since v0.15.2)
@@ -290,13 +355,17 @@ class Sources:
             log = self._fixture("deltaLog.json") or []
         else:
             log = self._get_json(self.settings.delta_log_url, max_age_hours) or []
-        out: list[tuple[str, str, str]] = []
+        out: list[tuple[str, str, str, str, int]] = []
         for fetch in log:
             when = dt.datetime.fromisoformat(fetch["fetchTime"].replace("Z", "+00:00")).astimezone(dt.UTC)
             for kind in ("new", "updated"):
                 for item in fetch.get(kind, []):
-                    out.append((item["cveId"], kind, when.isoformat(timespec="seconds")))
-        return sorted(out, key=lambda e: e[2], reverse=True)
+                    at = when.isoformat(timespec="seconds")
+                    out.append((item["cveId"], kind, at, str(item.get("dateUpdated") or ""), -len(out)))
+        # v0.29.0: within one fetch, the record's own dateUpdated (newest first), then the order of the
+        # list: one fetch of 2026-11-21 came out oldest first, against "newest first".
+        out.sort(key=lambda e: (e[2], e[3], e[4]), reverse=True)
+        return [(cve, kind, at) for cve, kind, at, _, _ in out]
 
     # -- KEV --------------------------------------------------------------------------------
     def kev(self) -> dict[str, dict[str, Any]]:
@@ -395,22 +464,40 @@ class Sources:
         cve_bucket(cve_id)  # validates the id before it goes anywhere
         return f"{self.settings.gti_url.rstrip('/')}/collections/vulnerability--{cve_id.lower()}"
 
+    def _gti_missing(self, url: str) -> Path:
+        return self._cache_path(url).with_suffix(".none")
+
     def gti_cached(self, cve_id: str) -> bool:
-        if self.fixtures is not None:
+        """The answer is in the cache, or GTI said it did not know the CVE within gti_missing_hours
+        (v0.29.0): no call, no budget."""
+        url = self.gti_url(cve_id)
+        if self._cached(url, self.settings.gti_cache_hours) is not None:
             return True
-        return self._cached(self.gti_url(cve_id), self.settings.gti_cache_hours) is not None
+        marker = self._gti_missing(url)
+        return marker.exists() and time.time() - marker.stat().st_mtime < self.settings.gti_missing_hours * 3600
 
     def gti_vulnerability(self, cve_id: str) -> dict[str, Any] | None:
-        """Raw GTI vulnerability object (`data` envelope), None when GTI has none for this CVE."""
+        """GTI's vulnerability object of one CVE, or None when GTI does not know it. A 404 is kept as a
+        marker for gti_missing_hours (v0.29.0: it was asked again at every request). A lookup beyond
+        the day's budget raises GtiBudgetError."""
         if self.fixtures:
             return self._fixture(f"gti/{cve_id}.json")
         key = self.settings.gti_api_key
         if not key:
             raise SourceAuthError(f"GTI API key missing: set the variable {self.settings.gti_api_key_env}")
         url = self.gti_url(cve_id)
-        if not self.gti_cached(cve_id):
+        if self._cached(url, self.settings.gti_cache_hours) is None:
+            marker = self._gti_missing(url)
+            if marker.exists() and time.time() - marker.stat().st_mtime < self.settings.gti_missing_hours * 3600:
+                return None
+            if not self.gti_budget.take():
+                self.gti_over_budget += 1
+                raise GtiBudgetError(f"GTI: daily budget of {self.settings.gti_daily_calls} calls spent")
             self.gti_calls += 1
-        return self._get_json(url, self.settings.gti_cache_hours, headers={"x-apikey": key}, retries_429=3)
+        data = self._get_json(url, self.settings.gti_cache_hours, headers={"x-apikey": key}, retries_429=3)
+        if data is None:
+            self._keep(self._gti_missing(url), "")
+        return data
 
     def gti_search(self, query: str, limit: int = 40, max_age_hours: float = 1) -> list[dict[str, Any]]:
         """GTI vulnerability objects matching a search filter (v0.22.0): GET {gti_url}/collections
@@ -426,6 +513,9 @@ class Sources:
         url = f"{self.settings.gti_url.rstrip('/')}/collections"
         params = {"filter": query, "limit": str(limit), "order": "last_modification_date-"}
         if not self._cached(url + "?" + json.dumps(params, sort_keys=True), max_age_hours):
+            if not self.gti_budget.take():
+                self.gti_over_budget += 1
+                raise GtiBudgetError(f"GTI: daily budget of {self.settings.gti_daily_calls} calls spent")
             self.gti_calls += 1
         data = self._get_json(url, max_age_hours, params=params, headers={"x-apikey": key}, retries_429=3)
         return list((data or {}).get("data") or [])

@@ -1,4 +1,4 @@
-# Operator's manual (v0.28.2)
+# Operator's manual (v0.29.0)
 
 Day-to-day operation of a tenant deployed on Kubernetes (`NGVM_RUN_MODE: kubernetes`): where each
 part runs, the usual actions, how to check the state, the known failures and their remedies,

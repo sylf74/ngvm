@@ -5,6 +5,56 @@ analyst and, under **Upgrade**, what a tenant must do when it moves to that tag 
 `NGVM_REF` in its `.gitlab-ci.yml`; `A2VM_REF` before v0.25.0). Design and reasons: the HLD roadmap (`docs/hld/00-product-strategy.md`
 §11) and the LLDs. A release adds its entry here in the same merge request (CLAUDE.md, Releasing).
 
+## v0.29.0 — 2026-11-21
+
+The corrections found on 20 and 21 November, before any Tenable work (moved to v0.30.0).
+
+- **GTI capped by the day**: the budget `NGVM_GTI_MAX_CALLS` was counted per request of the shared
+  service, so a run asked in 29 batches was not capped at all, and a CVE unknown to GTI (404, most of
+  them) was asked again at every request. The calls of a UTC day are now counted on the cache volume
+  for every request and tenant (`NGVM_GTI_DAILY_CALLS`, 1000 by default; a spent budget is said once,
+  cached answers are still read), a 404 is remembered for `NGVM_GTI_MISSING_HOURS` (72 h), and
+  `NGVM_GTI_CACHE_HOURS` sets how long an answer is kept. The shared service's status gives the day's
+  count. The list of new CVEs filtered by KEV or CVSS asked GTI about every CVE of the period: it asks
+  nothing now. The tenant pipeline hands these variables to the pods.
+- **The chat's new CVEs as an overview**: "which new vulnerabilities since yesterday" came back as
+  the first page of the deltaLog, nine WordPress plugins of one CNA burst, and with no period the
+  counts were the whole 30 days. `list_new_cves` now answers one entry per subject (WordPress, Linux
+  kernel, else the vendor), ranked by KEV, tenant alert, highest CVSS, then count, five CVE ids each;
+  `subject=` lists the CVEs of one subject; without a period, the last 24 hours, said in the answer.
+  Each record carries its CNA (`assigner`); within one fetch of the deltaLog the newest change comes
+  first.
+- **The alert mail**: a kind — **Alerte** (red tag), **Hot Topic** (orange), **Information** (blue) —
+  set by rules of the profile (`alerts.kinds`) on the last run's decisions, which the step `inventory`
+  now sends to the watch: by default ACT is an Alerte, ATTEND with KEV or EPSS ≥ 0.10 a Hot Topic; not
+  triaged yet, KEV is an Alerte, EPSS ≥ 0.80 a Hot Topic; anything else Information. The sheet opens
+  on the CVE and its sources: who published it and exactly when (the CNA, CERT-FR, the vendor, KEV,
+  the radar, GTI's first exploitation), with the reference links, in the client's time zone and UTC.
+  The HTML is laid out (tables, inline styles, a header tinted by the kind, the CVE block in slate
+  blue) from the Markdown, so edited and translated sheets keep it; the mail names no product. The
+  recommended delay says its source: the client's SLA rule when one holds, else CISA BOD 26-04 with
+  its inputs. Subjects: `[Alert] <title>` (`[Alerte]` in French); the analysts' mail starts with
+  `[To validate][<client>]`.
+- **Dispatch**: when `caller` is already an e-mail that two iTop Persons share, the message no longer
+  advises to give an e-mail; and the daily job's final error says it comes from the step `publish`,
+  not from the dispatch.
+- **The address check**: a host `<svc>.<ns>` whose `<ns>` has a dash and is no namespace of the
+  cluster stops the deployment (a reporting DSN to the portal's former namespace refused six runs in
+  a row, the check taking it for a host outside the cluster).
+- **The collector's installer**: with Podman, the registry login goes to the persistent
+  `/root/.config/containers/auth.json` and a stale login of the session is removed (an old robot
+  account made the pull of v0.28.2 fail); `docs/collectors.md` §4 gives the upgrade of a collector's
+  image.
+- A test of v0.24.0 that failed seven days after its fixed date reads the clock.
+
+**Upgrade**: in each tenant project, the `ref` of the include and `NGVM_REF` go to `v0.29.0`. At work,
+set `NGVM_GTI_DAILY_CALLS` (and keep `NGVM_GTI_MAX_CALLS` per request) on the tenant serving the shared
+service before enabling GTI again. A reporting DSN naming a namespace that no longer exists now stops
+`deploy-k8s`: correct it (`kubectl get namespaces`). The kinds of the alert mails need nothing: the
+defaults apply until a profile sets `alerts.kinds`; the run's decisions reach the watch from the next
+daily run. A collector moves to the new image by running its install script again with `--image`
+(or by hand, `docs/collectors.md` §4).
+
 ## v0.28.2 — 2026-11-20
 
 The corrections found while validating v0.28.1 on a tenant of 236 assets and 65 000 findings.

@@ -13,7 +13,7 @@
 #
 #     include:
 #       - project: vulnops/ngvm
-#         ref: v0.28.2
+#         ref: v0.29.0
 #         file: templates/client-pipeline.yml
 #     variables:
 #       NGVM_REF: v0.19.0        # same version as the include
@@ -538,6 +538,7 @@ deploy-k8s:
       ENVF="$(mktemp)"; echo "env:" > "$ENVF"
       for v in NGVM_LLM_ENABLED NGVM_LLM_BASE_URL NGVM_LLM_MODEL NGVM_GTI_ENABLED NGVM_EXTERNAL_PROJECT \
           NGVM_LLM_THINKING NGVM_LLM_FAMILY NGVM_LLM_REASONING \
+          NGVM_GTI_MAX_CALLS NGVM_GTI_DAILY_CALLS NGVM_GTI_CACHE_HOURS NGVM_GTI_MISSING_HOURS \
           NGVM_MAIL_FROM NGVM_MAIL_TRANSPORT NGVM_SMTP_HOST NGVM_SMTP_PORT NGVM_SMTP_TLS NGVM_SMTP_USER \
           NGVM_GRAPH_TENANT_ID NGVM_GRAPH_CLIENT_ID NGVM_GRAPH_SENDER NGVM_ANALYST_TO NGVM_SOURCE_FAILURES; do
         eval "val=\"\${$v:-}\""

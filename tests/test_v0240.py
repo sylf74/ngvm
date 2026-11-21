@@ -370,7 +370,10 @@ def test_the_graph_is_written_read_and_carried_to_the_next_run(tmp_path, capsys)
 
     p = _profile(tmp_path, external={"client": "acme-external"})
     detect = tmp_path / "detect" / "acme"
-    write_detection(detect / "sentinelone.json", _det("sentinelone", _host("pc042", "sentinelone", ["10.20.30.40"])))
+    # The command reads the clock: a sighting of today, not of NOW, stays within off_premises_days (v0.29.0).
+    seen = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
+    pc = _host("pc042", "sentinelone", ["10.20.30.40"], observed_at=seen)
+    write_detection(detect / "sentinelone.json", _det("sentinelone", pc))
     write_detection(detect / "openvas.json", _det("openvas", _host("web01", "openvas", ["192.0.2.10"], _reached(5432))))
     out = tmp_path / "assets"
     args = ["build", p.source_path, "--detect", str(tmp_path / "detect"), "--out", str(out), "--previous", str(out)]

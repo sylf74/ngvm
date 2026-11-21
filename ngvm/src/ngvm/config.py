@@ -46,7 +46,12 @@ class SourceSettings:
     gti_api_key_env: str = "GTI_API_KEY"
     gti_cache_hours: float = 24
     gti_workers: int = 4
-    gti_max_calls: int = 2000  # network lookups per run (cached answers are free); most urgent CVEs first
+    gti_max_calls: int = 2000  # network lookups per request (cached answers are free); most urgent CVEs first
+    # v0.29.0: the calls of a day (UTC), every request and every tenant of this cache together, kept on
+    # the cache volume: a run asked in 29 batches was not capped at all by gti_max_calls. 0: no cap.
+    gti_daily_calls: int = 1000
+    # v0.29.0: a CVE unknown to GTI (404, the majority) is not asked again for this long.
+    gti_missing_hours: float = 72
     # The shared intelligence service (D17, v0.22.0): records collected and enriched once for every
     # tenant, the radar's events. Empty: the job reads the sources itself, as before.
     intel_url: str = ""
@@ -185,6 +190,9 @@ _ENV_OVERRIDES = {
     "CVE_RECORD_URL": ("sources", "cve_record_url"),
     "GTI_ENABLED": ("sources", "gti_enabled"),
     "GTI_MAX_CALLS": ("sources", "gti_max_calls"),
+    "GTI_DAILY_CALLS": ("sources", "gti_daily_calls"),
+    "GTI_CACHE_HOURS": ("sources", "gti_cache_hours"),
+    "GTI_MISSING_HOURS": ("sources", "gti_missing_hours"),
     "INTEL_URL": ("sources", "intel_url"),
     "INTEL_TOKEN_FILE": ("sources", "intel_token_file"),
     "INTEL_FALLBACK": ("sources", "intel_fallback"),
@@ -298,4 +306,8 @@ def describe_gti(settings: Settings) -> str:
     if not src.gti_enabled:
         return "GTI: disabled"
     key = "set" if src.gti_api_key else f"NOT SET ({src.gti_api_key_env})"
-    return f"GTI: enabled, url={src.gti_url}, api key {key}, max {src.gti_max_calls} lookups"
+    daily = f"{src.gti_daily_calls} a day (UTC)" if src.gti_daily_calls > 0 else "no daily cap"
+    return (
+        f"GTI: enabled, url={src.gti_url}, api key {key}, max {src.gti_max_calls} lookups per request, "
+        f"{daily}, answers cached {src.gti_cache_hours:g} h, unknown CVEs {src.gti_missing_hours:g} h"
+    )

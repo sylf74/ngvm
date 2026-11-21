@@ -154,6 +154,11 @@ class ItopConnector:
         where = f"{key} {self.caller!r} in {self.caller_organization!r}"
         if n == 0:
             return f"iTop: no Person with {where}: no ticket can be created (dispatch.yaml `caller`)"
+        if key == "email":  # v0.29.0: the e-mail is already the criterion; giving it again cannot help
+            return (
+                f'iTop: {n} Persons with {where}: iTop refuses every ticket ("Several items found"); remove '
+                "the duplicate in iTop, or give `caller` the e-mail of a Person of its own (e.g. a Person NGVM)"
+            )
         return (
             f'iTop: {n} Persons with {where}: iTop refuses every ticket ("Several items found"); keep one, '
             "or give `caller` the e-mail of one of them"

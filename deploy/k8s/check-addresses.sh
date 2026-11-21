@@ -9,7 +9,8 @@
 #   NGVM_LLM_BASE_URL                    one URL or several, comma-separated
 #   NGVM_REPORTING_DSN, _DSN_<NAME>      postgresql:// URIs or key=value strings (or File variables)
 # A host names a Service of the cluster when it is `<svc>.<ns>.svc[.cluster.local]`, or `<svc>.<ns>`
-# where <ns> is a namespace of the cluster; any other host is outside (left alone). Only variable
+# where <ns> is a namespace of the cluster; `<a>.<b>` where <b> has a dash (no top-level domain has
+# one) and is no namespace stops the job too (v0.29.0); any other host is outside (left alone). Only variable
 # names, Services and namespaces are printed, never a value (a connection string holds a password).
 # Exit 1 when a Service is missing; a check kubectl may not make (forbidden) is a warning.
 # NGVM_DEPLOY_NAMESPACE (v0.28.2): the namespace this job deploys. With NGVM_INTEL_SERVE true, the
@@ -40,6 +41,15 @@ host_of() {
   printf '%s' "$v" | tr '[:upper:]' '[:lower:]'
 }
 
+# namespace_like LABEL: a label no top-level domain can be (a dash, not an IDN's xn--).
+namespace_like() {
+  case "$1" in
+    xn--*) return 1 ;;
+    *-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # check NAME VALUE: the Service a value names, if any, must exist.
 check() {
   name=$1
@@ -57,7 +67,19 @@ check() {
       case "$second" in
         *.*) return 0 ;;
       esac
-      if kubectl get namespace "$second" > /dev/null 2>&1; then svc=$first; ns=$second; else return 0; fi
+      if nsout=$(kubectl get namespace "$second" 2>&1); then
+        svc=$first; ns=$second
+      elif printf '%s' "$nsout" | grep -q 'NotFound' && namespace_like "$second"; then
+        # v0.29.0: `<svc>.<ns>` of a namespace that no longer exists was taken for a host outside the
+        # cluster: NGVM_REPORTING_DSN_K8S still named the portal's former namespace, and publish
+        # refused six runs in a row. A second label with a dash is no top-level domain: a namespace.
+        echo "ERROR $name points at $first.$second: there is no namespace $second in this cluster:" \
+          "correct the variable (kubectl get namespaces lists them)" >&2
+        failed=1
+        return 0
+      else
+        return 0
+      fi
       ;;
     *) return 0 ;;
   esac

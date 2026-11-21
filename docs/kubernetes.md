@@ -158,7 +158,10 @@ Before it changes anything, `deploy-k8s` checks the addresses the pods will be g
 the host of `NGVM_REPORTING_DSN` and of each `NGVM_REPORTING_DSN_<NAME>`. A host that names a
 Service of the cluster (`<svc>.<ns>.svc[.cluster.local]`, or `<svc>.<ns>` when `<ns>` is a
 namespace of the cluster) must name one that exists, else the job stops on
-`ERROR NGVM_INTEL_URL points at the service … which does not exist`. An intel URL to a missing
+`ERROR NGVM_INTEL_URL points at the service … which does not exist`. Since v0.29.0 a host
+`<svc>.<ns>` whose `<ns>` has a dash and is no namespace of the cluster stops it too (no top-level
+domain has a dash): `NGVM_REPORTING_DSN_K8S` of a tenant still named the portal's namespace of the
+former product name, the portal had moved to `ngvm-portal`, and the step `publish` refused six runs in a row (`failed to resolve host`). An intel URL to a missing
 Service once deployed fine and failed in every passage. Other hosts are outside the cluster and
 left alone; a check the agent may not make (forbidden) is a warning. Only variable names, Services
 and namespaces are printed, never a value. The tenant that serves the shared service

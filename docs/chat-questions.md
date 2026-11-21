@@ -25,11 +25,13 @@ How to ask:
 
 ## The watch and the new CVEs
 
-**`list_new_cves`**: the CVEs published or updated in a period, whoever they concern, and the alert the watch drafted for this tenant, if any.
+**`list_new_cves`**: the CVEs published or updated in a period (by default the last 24 hours), whoever they concern: an overview by subject (WordPress, Linux kernel, a vendor), then the CVEs of one subject with the alert the watch drafted for this tenant, if any.
 
 - Quelles CVE ont été publiées depuis hier, avec leur heure de découverte ?
 - Quelles nouvelles CVE critiques depuis lundi 9 h ?
 - Quelles CVE ont été ajoutées au KEV cette semaine ?
+- Quelles nouvelles vulnérabilités depuis hier ?
+- Lesquelles concernent WordPress ?
 
 **`list_alerts`**: the watch's alerts for the tenant in a period, with their status (pending, validated, sent...).
 

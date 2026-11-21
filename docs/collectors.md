@@ -127,14 +127,14 @@ sudo bash install-collector.sh --tenant lab --collector lab-lan \
 | Targets | `identity_file` pointed at the key; with `--openvas-hosts`, an `openvas` section on the gvmd socket (an existing one keeps its hosts) |
 | GMP account | With `--openvas-hosts` and no `gvm.env`: the account `--gvm-user` made in gvmd, its password written to `gvm.env` (root, 0600), never printed |
 | `collector.yaml` | A connector `lan-ssh` when the targets file has targets, `lan-openvas` with `--openvas-hosts` |
-| Image | Pulled (login with the deploy token when given); the password file removed |
+| Image | Pulled (login with the deploy token when given; with Podman in the persistent `auth.json`, a stale login of the session removed); the password file removed |
 | Socket | Its rights read; `--group-add` when "other" may not use it |
 | Configuration | Read by the agent inside the image: an error shows before the first run |
 | Units | `ngvm-collector@.service` and `.timer` (`--schedule`, default 07:30), one timer enabled per connector; `ngvm-collector-poll.service` and `.timer`, every 5 minutes (v0.23.10, *The poll* below) |
 
 It starts no scan: it ends with the commands of the first runs. Without `--openvas-hosts`, the
-collector does SSH scans only, and Docker is the only engine the script uses; with Podman, follow
-the steps by hand below.
+collector does SSH scans only. The script runs `docker`; where `docker` is Podman's alias, the
+registry login goes to `/root/.config/containers/auth.json` (v0.29.0, §4).
 
 ### By hand
 
@@ -392,6 +392,29 @@ source missing or older than its `max_age_hours`; with no detection at all, it s
   no longer matches any digest.
 - **Move a collector**: change its address in `NGVM_INTAKE_ALLOW`, push, then install it on the new
   VM with the same token.
+- **Upgrade the image** (a new release tag): run the install script again with the new `--image`,
+  from a folder holding `registry-user.txt` / `registry-password.txt` when the registry asks for a
+  login. It pulls the image, rewrites the units with it and reloads systemd; the timers keep their
+  schedule. By hand, the same three steps:
+
+  ```bash
+  sudo docker pull registry.example.org/vulnops/ngvm/detect:v0.29.0
+  sudo sed -i 's#/detect:v[0-9.]*#/detect:v0.29.0#' /etc/systemd/system/ngvm-collector@.service /etc/systemd/system/ngvm-collector-poll.service
+  sudo systemctl daemon-reload
+  ```
+
+  Then check the unit line (`systemctl cat ngvm-collector@lan-ssh.service | grep detect:`) and start
+  one run (§3). The image is read at each run: nothing else to restart.
+- **Podman: a pull refused after a robot account change** (`unauthorized`, `denied`): Podman reads
+  `/run/containers/0/auth.json` (the login of the session, lost at reboot) before
+  `/root/.config/containers/auth.json`, so a stale login there wins. Since v0.29.0 the install script
+  logs in to the persistent file and removes the registry's entry from the runtime file; by hand:
+
+  ```bash
+  sudo podman logout --authfile /run/containers/0/auth.json registry.example.org
+  sudo podman login --authfile /root/.config/containers/auth.json registry.example.org
+  sudo podman pull --authfile /root/.config/containers/auth.json registry.example.org/vulnops/ngvm/detect:v0.29.0
+  ```
 
 ## 5. When something goes wrong
 

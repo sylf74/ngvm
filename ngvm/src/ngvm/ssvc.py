@@ -124,6 +124,21 @@ def cvss_heuristic(metric: CvssMetric) -> tuple[str, str]:
     return ("yes" if auto else "no"), ("total" if total else "partial")
 
 
+def remediation_inputs(record: VulnRecord, unknown_inputs: str = "conservative") -> tuple[str, str, str]:
+    """(automatable, technical impact, where they come from) of the BOD 26-04 delay of one record:
+    the CISA ADP's SSVC, else the CVSS heuristic, else the policy's default (`policy.unknown_inputs`).
+    v0.29.0: the alert mail says on what the delay rests."""
+    adp = record.adp_ssvc or {}
+    if "automatable" in adp and "technical_impact" in adp:
+        return adp["automatable"], adp["technical_impact"], "cisa-adp"
+    if (metric := record.best_cvss()) is not None:
+        automatable, impact = cvss_heuristic(metric)
+        return automatable, impact, "cvss"
+    if unknown_inputs == "optimistic":
+        return "no", "partial", "default"
+    return "yes", "total", "default"
+
+
 def remediation_delay(
     record: VulnRecord, publicly_exposed: bool, unknown_inputs: str = "conservative", lang: str = "en"
 ) -> str:
@@ -134,14 +149,6 @@ def remediation_delay(
     estimate, scanner vector): the watch's delay is a first recommendation, the decision stays the
     triage's.
     """
-    adp = record.adp_ssvc or {}
-    if "automatable" in adp and "technical_impact" in adp:
-        automatable, impact = adp["automatable"], adp["technical_impact"]
-    elif (metric := record.best_cvss()) is not None:
-        automatable, impact = cvss_heuristic(metric)
-    elif unknown_inputs == "optimistic":
-        automatable, impact = "no", "partial"
-    else:
-        automatable, impact = "yes", "total"
+    automatable, impact, _ = remediation_inputs(record, unknown_inputs)
     labels = BOD_FR if lang == "fr" else BOD_EN
     return labels[bod_timeline(record.in_kev, publicly_exposed, automatable, impact)]
